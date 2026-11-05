@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Your Browser Has Thoughts",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "A tiny chat room in the corner of every page. Nine inner voices talk, live, about what your browser can see you doing. Nothing leaves your browser.",
   "permissions": [
-    "storage"
+    "storage",
+    "scripting"
   ],
   "content_scripts": [
     {
@@ -33,5 +34,12 @@
     "32": "icons/32.png",
     "48": "icons/48.png",
     "128": "icons/128.png"
+  },
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
   }
 }

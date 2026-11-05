@@ -4,8 +4,16 @@
 (function () {
   "use strict";
   if (window.top !== window) return;
-  if (window.__ybht) return;
-  window.__ybht = true;
+  // already running here? (after the extension is reloaded, the old copy is dead: replace it)
+  if (window.__ybht && window.__ybht()) return;
+  try {
+    document.querySelectorAll("[data-ybht]").forEach(function (el) { el.remove(); });
+    Array.prototype.forEach.call(document.documentElement.children, function (el) {
+      var st = el.getAttribute("style") || "";
+      if (el.tagName === "DIV" && /2147483647/.test(st) && /bottom: ?1[68]px/.test(st)) el.remove();
+    });
+  } catch (e) {}
+  window.__ybht = function () { return alive(); };
 
   var VOICES = {
     TALLY: { name: "Tally", c: "#3cc7b8" },
@@ -137,10 +145,23 @@
     t = t.replace(/\s+[-–|·•]\s+(YouTube|Wikipedia|Reddit|GitHub|X|Twitch)$/i, "");
     return clip(t, 70);
   }
+  // the video's channel, subscribers and views, as YouTube shows them under the video
+  function ytInfo() {
+    var o = { channel: "", subs: "", views: "" };
+    try {
+      var c = q("ytd-watch-metadata ytd-channel-name a") || q("#owner #channel-name a") || q("#upload-info #channel-name a");
+      o.channel = c ? clip(c.textContent, 40) : "";
+      var sub = q("ytd-watch-metadata #owner-sub-count") || q("#owner-sub-count");
+      o.subs = o.channel && sub && /subscriber/i.test(sub.textContent) ? clip(sub.textContent, 30) : "";
+      var v = q("ytd-watch-metadata #info span") || q("#info-container #info span");
+      o.views = v && /\bviews?$/i.test(v.textContent.trim()) ? clip(v.textContent, 30) : "";
+    } catch (e) {}
+    return o;
+  }
   var GH_RESERVED = /^(settings|notifications|pulls|issues|explore|marketplace|new|login|search|topics|trending|codespaces|sponsors|organizations|orgs|features|copilot|dashboard|stars|watching|discussions)$/;
 
   // what the voices say about the page you're on: {lines, r} or null
-  function pageTalk(s) {
+  function pageTopics(s) {
     var path = location.pathname.split("/").filter(Boolean), qs = new URLSearchParams(location.search);
     var T = pageTitle(), h = s.hosts[host] || { loads: 1 };
 
@@ -150,15 +171,38 @@
       if (path[0] === "notifications") return { lines: [["DREAD", "GitHub notifications. Open them slowly. Slower."]], r: "the address is github.com/notifications" };
       if (path[0] === "new") return { lines: [["GRAND", "A new repository. A blank page. A beginning."], ["MGMT", "Another one?"]], r: "the address is github.com/new" };
       if (path.length === 1 && !GH_RESERVED.test(path[0])) {
-        var who = path[0], mine = me && who.toLowerCase() === me.toLowerCase();
+        var who = path[0], mine = me && who.toLowerCase() === me.toLowerCase(), tab = qs.get("tab") || "";
         var fol = num(q('a[href$="?tab=followers"] .text-bold')), reps = num(q('a[href$="?tab=repositories"] .Counter'));
-        if (mine) {
-          var L = [["GOSSIP", "This is your own profile. You're looking at yourself."], ["GRAND", "And why not. Look at them."]];
-          if (fol !== null) L.push(["TALLY", n(fol, "follower", "followers") + "."], fol <= 3 ? ["GOSSIP", fol === 0 ? "I'll follow you. I can't. I'd like to." : "Who " + (fol === 1 ? "is it" : "are they") + "? I need to know."] : ["HOST", "Say hi to them for me."]);
-          if (reps !== null && reps >= 20) L.push(["MGMT", reps + " repositories. I'd like a status report on each of them by Friday."]);
-          return { lines: L, r: "the address (github.com/" + who + ") matches the page's signed-in name" + (fol !== null ? "; the page shows " + n(fol, "follower", "followers") : "") + (reps !== null ? " and " + reps + " repositories" : "") };
+        var starsN = num(q('a[href$="?tab=stars"] .Counter'));
+        if (!mine) return { key: "gh:user:" + who, lines: [["GOSSIP", "Whose profile is this? " + who + "? What do we know about " + who + "?"], ["TALLY", "Only the name."], ["GOSSIP", "It's a start."]], r: "the address is github.com/" + who };
+        var out = [];
+        var folLine = fol === null ? null : fol <= 3 ? ["GOSSIP", fol === 0 ? "I'd follow you. I can't. I'd like to." : "Who " + (fol === 1 ? "is it" : "are they") + "? I need to know."] : ["HOST", "Say hi to them for me."];
+        out.push({ key: "gh:me", facts: fol === null ? "" : String(fol),
+          lines: [["GOSSIP", "This is your own profile. You're looking at yourself."], ["GRAND", "And why not. Look at them."]].concat(fol === null ? [] : [["TALLY", n(fol, "follower", "followers") + "."], folLine]),
+          again: function (prev) {
+            if (fol === null || prev === "" || prev === undefined) return null;
+            var p = +prev;
+            if (fol > p) return [["TALLY", "Followers: " + p + " earlier. " + fol + " now."], ["GOSSIP", "Someone new! Who is it? I need to know."], ["GRAND", "The crowd grows."]];
+            if (fol < p) return [["TALLY", "Followers: " + p + " earlier. " + fol + " now."], ["DREAD", "Someone left. Don't look. I looked."]];
+            return null;
+          },
+          r: "the address (github.com/" + who + ") matches the page's signed-in name" + (fol !== null ? "; the page shows " + n(fol, "follower", "followers") : "") });
+        if (tab === "repositories" && reps !== null)
+          out.push({ key: "gh:me:repos", facts: String(reps), lines: [["MGMT", reps + " repositories. I'd like a status report on each of them by Friday."], ["TALLY", "Starting Monday, that's " + Math.ceil(reps / 5) + " a day."], ["MGMT", "Then it's settled."]],
+            again: function (prev) { return +prev < reps ? [["GRAND", "Another repository. " + reps + " now. An empire."], ["MGMT", "Another status report."]] : null; }, r: "the page shows " + reps + " repositories" });
+        if (tab === "stars" && starsN !== null)
+          out.push({ key: "gh:me:stars", facts: String(starsN), lines: [["TALLY", "You've starred " + n(starsN, "repository", "repositories") + "."], ["GRAND", "A collector. A curator. A patron of the arts."], ["GOSSIP", "Do they know you starred them?"], ["TALLY", "The number on their page went up by one."]], r: "the page shows " + starsN + " stars" });
+        if (!tab || tab === "overview") {
+          var md = q("article.markdown-body"), li = md ? md.querySelectorAll("li").length : 0, links = md ? md.querySelectorAll("a").length : 0;
+          if (md && li >= 3) out.push({ key: "gh:me:readme", facts: String(li), lines: [["GOSSIP", "Your profile README has a list in it. " + li + " items."], ["MGMT", "I've read it. As your manager."], ["MGMT", "Strong list. Concerning, but strong."]].concat(links >= 5 ? [["CURSOR", n(links, "link", "links") + " in there. I could click every one. Say the word."]] : []),
+            again: function (prev) { return +prev < li ? [["GOSSIP", "Your README list got longer. " + prev + " items before, " + li + " now."], ["GRAND", "The legend grows."]] : null; },
+            r: "the README on this page has " + li + " list items and " + links + " links" });
+          var pins = [];
+          try { document.querySelectorAll(".pinned-item-list-item-content .repo, .pinned-item-list-item .repo").forEach(function (e) { var t = (e.textContent || "").trim(); if (t && pins.indexOf(t) < 0) pins.push(t); }); } catch (e) {}
+          if (pins.length >= 2) out.push({ key: "gh:me:pins", facts: pins.join(","), lines: [["TALLY", "Pinned: " + pins.slice(0, 3).join(", ") + (pins.length > 3 ? ", and " + (pins.length - 3) + " more" : "") + "."], ["GOSSIP", pins[0] + " is first. Is " + pins[0] + " the favorite?"], ["HOST", "They're all favorites."], ["GOSSIP", "It's first, though."]],
+            again: function () { return [["GOSSIP", "You changed your pinned repos. First is " + pins[0] + " now."], ["MGMT", "I've updated the org chart."]]; }, r: "the pinned repositories on this page" });
         }
-        return { lines: [["GOSSIP", "Whose profile is this? " + who + "? What do we know about " + who + "?"], ["TALLY", "Only the name."], ["GOSSIP", "It's a start."]], r: "the address is github.com/" + who };
+        return out;
       }
       if (path.length >= 2 && !GH_RESERVED.test(path[0])) {
         var owner = path[0], repo = path[1], yours = me && owner.toLowerCase() === me.toLowerCase();
@@ -184,35 +228,64 @@
     }
     if (/(^|\.)youtube\.com$/.test(host)) {
       if (path[0] === "shorts") return { lines: [["DREAD", "Shorts. Each one is short. That's how they get you."], ["TALLY", "Page " + h.loads + " of YouTube today."]], r: "the address starts with youtube.com/shorts; at least " + n(h.loads, "page load", "page loads") + " on youtube.com today" };
-      if (path[0] === "watch" && T) return { lines: [["GOSSIP", "“" + T + "”. What's it about? Don't tell me. Tell me."], ["LIZARD", "Moving pictures. Stay still. Stay warm."]], r: "the tab title" };
+      if (path[0] === "watch" && T) {
+        var yt = ytInfo();
+        var Y = [["GOSSIP", "\u201C" + T + "\u201D" + (yt.channel ? ", by " + yt.channel : "") + ". What's it about? Don't tell me. Tell me."]];
+        if (yt.subs) Y.push(["TALLY", yt.channel + ": " + yt.subs + "."], ["GRAND", "And right now, one more viewer. You."]);
+        else Y.push(["LIZARD", "Moving pictures. Stay still. Stay warm."]);
+        if (yt.views) Y.push(["MGMT", yt.views + ". Let's not add to that. Too late."]);
+        return { key: "yt:" + (qs.get("v") || T), lines: Y, r: "the tab title" + (yt.channel ? ", and the channel name, subscriber count and views shown under the video" : "") };
+      }
       return null;
     }
     var se = /(^|\.)(google\.[a-z.]+|bing\.com|duckduckgo\.com|search\.brave\.com|ecosia\.org)$/.test(host) ? (qs.get("q") || "") : "";
     if (se) {
       se = clip(se, 60);
-      if (/\?$/.test(se)) return { lines: [["GOSSIP", "You asked the internet “" + se + "”"], ["GOSSIP", "You could have asked me."], ["TALLY", "You'd have made something up."], ["GOSSIP", "Quickly, though."]], r: "the search words in the address" };
-      return { lines: [["CURSOR", "“" + se + "”. " + n(words(se), "word", "words") + ". Let's see what comes up."], ["MGMT", "Click the first result. The first result is always fine."], ["DREAD", "It is never fine."]], r: "the search words in the address" };
+      if (/\?$/.test(se)) return { lines: [["GOSSIP", "You asked the internet \u201C" + se + "\u201D"], ["GOSSIP", "You could have asked me."], ["TALLY", "You'd have made something up."], ["GOSSIP", "Quickly, though."]], r: "the search words in the address" };
+      return { lines: [["CURSOR", "\u201C" + se + "\u201D. " + n(words(se), "word", "words") + ". Let's see what comes up."], ["MGMT", "Click the first result. The first result is always fine."], ["DREAD", "It is never fine."]], r: "the search words in the address" };
     }
     if (/(^|\.)reddit\.com$/.test(host) && path[0] === "r" && path[1]) return { lines: [["GOSSIP", "r/" + path[1] + ". I want to know everything they're saying in there."], ["TALLY", "Page " + h.loads + " of Reddit today."]], r: "the address is reddit.com/r/" + path[1] + "; at least " + n(h.loads, "page load", "page loads") + " on reddit.com today" };
-    if (/(^|\.)wikipedia\.org$/.test(host) && path[0] === "wiki" && T) return { lines: [["GRAND", "“" + T + "”. Knowledge. You're getting smarter in real time."], ["TALLY", "This page is " + n(screens(), "screen", "screens") + " long."], ["LIZARD", "Read the first one."]], r: "the tab title; page height divided by window height" };
+    if (/(^|\.)wikipedia\.org$/.test(host) && path[0] === "wiki" && T) return { lines: [["GRAND", "\u201C" + T + "\u201D. Knowledge. You're getting smarter in real time."], ["TALLY", "This page is " + n(screens(), "screen", "screens") + " long."], ["LIZARD", "Read the first one."]], r: "the tab title; page height divided by window height" };
     if (/(^|\.)(claude\.ai|chatgpt\.com|chat\.openai\.com|gemini\.google\.com|perplexity\.ai)$/.test(host)) return { lines: [["GOSSIP", "You're talking to another voice on " + host + "."], ["HOST", "We're right here, you know."], ["MGMT", "We can't answer questions. We can only make them worse."]], r: "the site's address" };
     if (/(^|\.)(mail\.google\.com|outlook\.live\.com|outlook\.office\.com|mail\.proton\.me)$/.test(host)) return { lines: [["DREAD", "Email."], ["MGMT", "Per my last thought."]], r: "the site's address" };
     if (/(^|\.)(amazon\.[a-z.]+|ebay\.[a-z.]+|etsy\.com)$/.test(host) && /cart/i.test(location.pathname)) return { lines: [["LIZARD", "The cart. The hunt is nearly over."], ["MGMT", "Is this an approved purchase? Who approved it? Was it me?"]], r: "the address has \"cart\" in it" };
     if (T) {
       var sc = screens();
       return { lines: pick([
-        [["GOSSIP", "Ooh. “" + T + "”. What's this one?"], ["CURSOR", "I'll find out. I'll hover over things."]],
-        [["MGMT", "“" + T + "”. I'll add it to the agenda."]],
-        [["TALLY", "“" + T + "”. " + n(sc, "screen", "screens") + " tall."], sc >= 8 ? ["LIZARD", "Nobody is reading all of that. Not even you."] : ["HOST", "A cozy one."]]
+        [["GOSSIP", "Ooh. \u201C" + T + "\u201D. What's this one?"], ["CURSOR", "I'll find out. I'll hover over things."]],
+        [["MGMT", "\u201C" + T + "\u201D. I'll add it to the agenda."]],
+        [["TALLY", "\u201C" + T + "\u201D. " + n(sc, "screen", "screens") + " tall."], sc >= 8 ? ["LIZARD", "Nobody is reading all of that. Not even you."] : ["HOST", "A cozy one."]]
       ]), r: "the tab title; page height divided by window height is " + sc };
     }
     return null;
+  }
+
+  // pick what to say about this page, remembering what's already been said (across tabs, for 3 days):
+  // a topic is said once, and only comes back if something on it changed (like your follower count)
+  function pageTalk(s) {
+    var t = pageTopics(s); if (!t) return null;
+    if (!Array.isArray(t)) t = [t];
+    var topics = s.topics || {}, now = Date.now(), chosen = null;
+    Object.keys(topics).forEach(function (k) { if (now - topics[k].ts > 3 * 86400000) delete topics[k]; });
+    for (var i = 0; i < t.length && !chosen; i++) {
+      var x = t[i], key = x.key || host + location.pathname + location.search, rec = topics[key];
+      if (!rec) chosen = { key: key, x: x, lines: x.lines };
+      else if (x.facts !== undefined && rec.facts !== x.facts) {
+        var L = x.again ? x.again(rec.facts) : null;
+        if (L) chosen = { key: key, x: x, lines: L }; else rec.facts = x.facts;
+      }
+    }
+    if (!chosen) { put({ topics: topics }); return null; }
+    topics[chosen.key] = { ts: now, facts: chosen.x.facts };
+    put({ topics: topics });
+    return { lines: chosen.lines, r: chosen.x.r };
   }
 
   /* ---------- the chat room panel ---------- */
   var holder, root, list, typingEl, pill, input, quiet, receiptsOn = false, open = true, unread = 0, booting = true, rendered = {};
   function buildPanel() {
     holder = document.createElement("div");
+    holder.setAttribute("data-ybht", "");
     holder.style.cssText = "all:initial;position:fixed;right:16px;bottom:16px;z-index:2147483647;";
     root = holder.attachShadow({ mode: "closed" });
     root.innerHTML =
@@ -324,10 +397,12 @@
   }
 
   /* ---------- posting: one line at a time, with "is typing", so nothing goes by too fast ---------- */
-  var queue = [], busy = false;
+  var queue = [], busy = false, cut = false;
   // prio 2: answering you; 1: something you just did; 0: filling silence
+  var recent = {};
   function post(lines, receipt, prio, force, after) {
     if (!lines || !lines.length) return;
+    if (prio < 2 && lines[0] && recent[lines[0][1]] && Date.now() - recent[lines[0][1]] < 86400000) return;
     if (!force && busy) return; // a conversation is already going; don't pile on
     queue.push({ lines: lines.filter(Array.isArray), r: receipt, prio: prio || 0, after: after });
     queue.sort(function (a, b) { return b.prio - a.prio; });
@@ -337,12 +412,15 @@
   function pump() {
     if (busy || !queue.length) return;
     var ex = queue.shift(), i = 0; busy = true;
+    if (ex.prio >= 2) cut = false;
     (function next() {
+      if (cut && ex.prio < 2) { cut = false; i = ex.lines.length; } // you spoke: the voices stop and listen
       if (i >= ex.lines.length) { busy = false; typingEl.textContent = ""; if (ex.after) ex.after(); setTimeout(pump, 1200); return; }
       var L = ex.lines[i];
       typingEl.textContent = VOICES[L[0]].name + " is typing…";
       setTimeout(function () {
         typingEl.textContent = "";
+        if (cut && ex.prio < 2) return next();
         append({ v: L[0], t: L[1], r: i === 0 ? ex.r : "" });
         i++;
         setTimeout(next, 800 + Math.min(2800, L[1].length * 30)); // time to read a line before the next voice starts typing
@@ -353,6 +431,7 @@
     m.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     m.ts = Date.now(); m.h = host;
     renderMsg(m); if (open) scrollDown();
+    if (m.t && m.v !== "YOU") recent[m.t] = m.ts;
     get(function (s) {
       s.room.push(m);
       if (s.room.length > 80) s.room = s.room.slice(-80);
@@ -382,11 +461,21 @@
 
   /* ---------- you talk to the room ---------- */
   function youSaid(t) {
+    if (busy) cut = true;
     append({ v: "YOU", t: t });
     var low = t.toLowerCase(), w = words(t);
     get(function (s) {
       var h = s.hosts[host] || { ms: 0, loads: 0 }, sites = Object.keys(s.hosts).length, before = s.youCount || 0;
-      var R;
+      var R, PT = pageTitle(), riff = null;
+      // does what you said have anything to do with what's on screen?
+      var yt = /(^|\.)youtube\.com$/.test(host) ? ytInfo() : {};
+      var said = low.match(/[a-z0-9']{4,}/g) || [];
+      var shares = function (str) { str = (str || "").toLowerCase(); return said.filter(function (x) { return str.indexOf(x) >= 0; }).length; };
+      if (yt.channel && shares(yt.channel))
+        riff = [["GOSSIP", yt.channel + "! I know that name. It's right there under the video."]].concat(yt.subs ? [["TALLY", yt.subs + ". And not one of them has ever talked to us."], ["HOST", "You did, though."]] : [["HOST", "Tell them we said hi."]]);
+      else if (PT && said.length && shares(PT))
+        riff = pick([[["GOSSIP", "You're talking about \u201C" + clip(PT, 45) + "\u201D. Finally, someone wants to talk about it."], ["TALLY", "It's the only thing on the screen."]],
+                     [["MGMT", "On topic. I love it. That's what this room is for."], ["LIZARD", "This room is for lying down."]]]);
       if (/^(hi|hey|hello|yo|sup|hiya|howdy|hai)\b/.test(low)) R = before ? [["HOST", "Hello again! Hi! Welcome back to the room!"], ["TALLY", "That's message number " + (before + 1) + " from you. Nobody else has ever written in here."], ["GOSSIP", "We don't get out much."]]
                                                                          : [["HOST", "Hello! Hi! Welcome! That's the first thing anyone has ever said to us."], ["GOSSIP", "We don't get out much."]];
       else if (/(shut up|be quiet|stop talking|go away|\bquiet\b|\bstfu\b)/.test(low)) { s.settings.muteUntil = Date.now() + 3600000; put({ settings: s.settings }); R = [["MGMT", "Understood. Quiet for one hour, starting now. I've put it in the calendar."], ["XBTN", "Or there's me."]]; }
@@ -404,9 +493,10 @@
         [["MGMT", "Let's take that offline."], ["HOST", "We are offline."], ["MGMT", "Then we've already taken it."]],
         [["GRAND", "The answer is within you."], ["TALLY", "It isn't in my numbers."]]
       ]);
+      else if (riff) R = riff;
       else R = pick([
         [["TALLY", "That's " + n(w, "word", "words") + ". Noted."], ["GOSSIP", "What did they mean, though?"]],
-        [["GOSSIP", "“" + clip(t, 50) + "”. I'm telling everyone."], ["HOST", "There's no one to tell."], ["GOSSIP", "I'm telling everyone in here."]],
+        PT ? [["MGMT", "Noted. I'm adding it to the minutes for \u201C" + clip(PT, 40) + "\u201D."], ["HOST", "There are minutes?"], ["MGMT", "There are now."]] : [["GOSSIP", "I'm telling everyone."], ["HOST", "There's no one to tell."], ["GOSSIP", "I'm telling everyone in here."]],
         [["MGMT", "Thank you for your feedback. It's been filed in this browser, and nowhere else."]],
         [["CURSOR", "I didn't type that. I want that on the record."], ["MGMT", "It's on the record."]],
         [["LIZARD", n(w, "word", "words") + ". You could have lain down instead."]]
@@ -499,7 +589,7 @@
         post([["HOST", "Oh! You can see us now. Welcome to the room. It's us. We live in your browser."],
               ["TALLY", "We see what your browser sees. It all stays on this computer."],
               ["GOSSIP", "Type something to us. Anything. Please."],
-              ["MGMT", "Or press “quiet”. Or shrink us with the little dash. We'll be fine."]],
+              ["MGMT", "Or press \u201Cquiet\u201D. Or shrink us with the little dash. We'll be fine."]],
              "first time this chat opened", 2, true);
         return;
       }
@@ -694,6 +784,7 @@
     buildPanel();
     var ui = s.ui || {};
     receiptsOn = !!ui.receipts;
+    s.room.forEach(function (m) { if (m.t && m.v !== "YOU") recent[m.t] = m.ts; });
     list.classList.toggle("r", receiptsOn); root.querySelector('[data-a="r"]').classList.toggle("on", receiptsOn);
     setOpen(ui.open !== false);
     render(s);
@@ -703,6 +794,7 @@
 
   if (alive()) chrome.storage.onChanged.addListener(function (ch) {
     if (!holder) return;
+    if (ch.room) (ch.room.newValue || []).forEach(function (m) { if (m.t && m.v !== "YOU") recent[m.t] = m.ts; });
     if (ch.room || ch.settings) get(render);
     // shrinking or opening the chat in one tab does the same in the others
     if (ch.ui && document.hidden) { var u = ch.ui.newValue || {}; if (u.open !== undefined && u.open !== open) { booting = true; setOpen(u.open); booting = false; } }
