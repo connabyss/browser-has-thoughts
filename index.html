@@ -135,6 +135,8 @@ function clock(d){
 }
 var DAYS=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 function store(k,v){try{ if(v===undefined) return localStorage.getItem(k); localStorage.setItem(k,v);}catch(e){return null}}
+function vary(list){ return list[(Math.max(1,visits)-1)%list.length]; }
+function pickOne(list){ return list[Math.floor(Math.random()*list.length)]; }
 var reduced=matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /* ---------- roster ---------- */
@@ -156,7 +158,7 @@ function drawRoster(){
   $("woke").textContent = n===9 ? "You have woken all 9. They will never be quiet now."
                                 : "You have woken "+n+" of 9.";
 }
-var finaleDone=false;
+var finaleDone=false, tookListen=0;
 function finale(){
   if(finaleDone) return; finaleDone=true;
   var before=store("ybht_all9")==="1"; store("ybht_all9","1");
@@ -262,22 +264,30 @@ function timeThought(){
                ["MGMT","Noted. Denied."]],r,2);
   else if(h<9) say([["TALLY","It's "+t+". You're either very disciplined or something has gone wrong."],
                ["DREAD","Something has gone wrong."]],r,2);
-  else if(h<12) say([["MGMT","It's "+t+" on a "+day+". I'm going to call this a meeting."],
-               ["HOST","It's a meeting with an empty page."],["MGMT","Most of them are."]],r,2);
+  else if(h<12) say(vary([
+               [["MGMT","It's "+t+" on a "+day+". I'm going to call this a meeting."],["HOST","It's a meeting with an empty page."],["MGMT","Most of them are."]],
+               [["MGMT",t+". Morning. Let's go around the room and say one thing we're excited about."],["DREAD","No."],["MGMT","Great energy."]],
+               [["MGMT","It's "+t+". Before we start, does everyone have the agenda?"],["TALLY","There's no agenda."],["XBTN","Item one could be me."]]]),r,2);
   else if(h<14) say([["LIZARD","It's "+t+". Lunch exists. I'm not telling you what to do. I'm telling you lunch exists."],
                ["MGMT","Lunch is just a meeting with food."],["LIZARD","Then I love meetings."]],r,2);
-  else if(h<18) say([["MGMT","It's "+t+" on a "+day+". I'll log this as research."],
-               ["TALLY","It isn't research."],["MGMT","I'll log that as well."],
-               ["GOSSIP","Research into what?"],["MGMT","That's confidential."],["TALLY","It's a page with nothing on it."],["MGMT","Which is why it's confidential."]],r,2);
-  else if(h<22) say([["HOST","It's "+t+". Of every page in the world you could have opened tonight, you opened one with nothing on it."],
-               ["GRAND","Taste."],["TALLY","Or they clicked a link."],["GRAND","Taste."]],r,2);
-  else say([["DREAD","It's "+t+". Midnight is closer than this morning was."],
-               ["TALLY","That's just true. It's not even a threat. It's just true."]],r,2);
+  else if(h<18) say(vary([
+               [["MGMT","It's "+t+" on a "+day+". I'll log this as research."],["TALLY","It isn't research."],["MGMT","I'll log that as well."],
+                ["GOSSIP","Research into what?"],["MGMT","That's confidential."]],
+               [["MGMT","It's "+t+" on a "+day+". Good. You're back. Let's pick up where we left off."],["TALLY","We left off nowhere."],["MGMT","Then this should be quick."]],
+               [["MGMT",t+" on a "+day+". I've blocked out this time for you."],["GOSSIP","For what?"],["MGMT","For this. Whatever this is. It's on the calendar now. It's real."]]]),r,2);
+  else if(h<22) say(vary([
+               [["HOST","It's "+t+". Of every page you could have opened tonight, you opened this one."],["GRAND","Taste."],["TALLY","Or they clicked a link."],["GRAND","Taste."]],
+               [["MGMT","It's "+t+". After hours. Nobody's managing you right now."],["MGMT","Except me. I'm managing you."]],
+               [["LIZARD","It's "+t+". Evening. The sun has left. You should consider following it."]]]),r,2);
+  else say(vary([
+               [["DREAD","It's "+t+". Midnight is closer than this morning was."],["TALLY","That's just true. It's not even a threat. It's just true."]],
+               [["MGMT","It's "+t+". Let's wrap up. Let's wrap up for real this time."],["LIZARD","You said that last time."],["MGMT","And it was true then too."]],
+               [["DREAD","It's "+t+". Tomorrow is getting closer while you read this sentence."],["TALLY","Also true."]]]),r,2);
 }
 function dayThought(){
   var d=new Date().getDay(), day=DAYS[d], r="new Date().getDay() says "+day;
   if(d===1) say([["MGMT","It's Monday. I've gone ahead and scheduled you for a full week of this."]],r,0);
-  else if(d===5) say([["LIZARD","It's Friday. The body knows. The body always knows."]],r,0);
+  else if(d===5) say([["MGMT","It's Friday. Let's not start anything big today."],["MGMT","Let's not start anything."]],r,0);
   else if(d===0||d===6) say([["MGMT","It's "+day+". I'm not technically allowed to manage you today."],
                ["MGMT","I'm going to anyway."]],r,0);
   else say([["TALLY","It's "+day+". Nobody has ever had strong feelings about "+day+"."],
@@ -294,15 +304,17 @@ function batteryThought(){
   }
   var p=Math.round(bat.level*100), r="navigator.getBattery(): "+p+"%, "+(bat.charging?"charging":"not charging");
   if(bat.charging && p>=100){
-    say([["TALLY","Your browser says 100% and plugged in. Either this is a desktop, or a laptop that is completely full and still being fed."],
-         ["LIZARD","Good. Everyone should be fed."]],r,1);
+    say(vary([
+         [["TALLY","Your browser says 100% and plugged in. Either this is a desktop, or a laptop that's full and still being fed."],["LIZARD","Good. Everyone should be fed."]],
+         [["MGMT","Battery at 100% and plugged in. Fully resourced. I expect great things."],["TALLY","From an empty page."],["MGMT","Especially from an empty page."]],
+         [["DREAD","100% and plugged in. Fine. Good. I'll find something else."]]]),r,1);
   } else if(bat.charging){
     say([["LIZARD","Plugged in at "+p+"%. Feeding. Good. Everything that can feed should be feeding."]],r,1);
   } else {
     var left = isFinite(bat.dischargingTime) && bat.dischargingTime>0 ? Math.round(bat.dischargingTime/60) : null;
     if(left!==null) r+=", dischargingTime says about "+plural(left,"minute");
     if(p<=20) say([["DREAD",p+"% battery. Not plugged in. And you are spending it here."]].concat(
-                   left!==null?[["TALLY","Your browser thinks you have about "+plural(left,"minute")+" left."],["DREAD","Of battery. It means of battery."]]
+                   left!==null?[["TALLY","Your browser thinks you have about "+plural(left,"minute")+" of battery left."],["MGMT","Let's talk about runway."]]
                               :[["TALLY","Your browser won't guess how long you've got. Even it doesn't want to know."]]),r,2);
     else if(p<=50) say([["DREAD",p+"% and unplugged. Half a battery is just a battery that has started leaving."]],r,1);
     else say([["GRAND",p+"% and not plugged into anything. Untethered. Free. A creature of the open road."],
@@ -329,25 +341,23 @@ function hookBattery(){
 /* ----- ambient facts, used once each ----- */
 var ambient=[
   function(){ var n=navigator.hardwareConcurrency; if(!n) return false;
-    say([["GRAND","Your browser says this machine has "+n+" logical processors. "+n+" tiny minds."],
-         ["GRAND","And you've brought all of them to look at nothing."]],"navigator.hardwareConcurrency = "+n,0); },
+    say([["GRAND","Your browser says this machine has "+n+" logical processors. A supercomputer."],
+         ["TALLY",n+"."],["GRAND","A supercomputer."]],"navigator.hardwareConcurrency = "+n,0); },
   function(){ var m=navigator.deviceMemory; if(!m) return false;
     var how = m>=8 ? "at least 8 GB" : "about "+m+" GB";
-    say([["GRAND","Your browser says you have "+how+" of memory."],["TALLY","This page is using almost none of it."],
-         ["GRAND","A palace with one candle lit."]],"navigator.deviceMemory = "+m+(m>=8?" (browsers stop counting at 8)":""),0); },
+    say([["GRAND","Your browser says you have "+how+" of memory."],["GRAND","Infinite, basically."],["TALLY",m>=8?"Browsers stop counting at eight. It could be eight.":"It's "+m+"."],["GRAND","Basically infinite."]],"navigator.deviceMemory = "+m+(m>=8?" (browsers stop counting at 8)":""),0); },
   function(){ var w=screen.width,h=screen.height, all=w*h;
     var f=$("feed").getBoundingClientRect(), ink=0;
     document.querySelectorAll(".say").forEach(function(s){Array.prototype.forEach.call(s.getClientRects(),function(b){ink+=b.width*b.height;});});
     var pct=Math.max(0.1,Math.round(ink/all*1000)/10);
     say([["TALLY","Your screen is "+fmt(w)+" by "+fmt(h)+". That's "+fmt(all)+" pixels."],
-         ["TALLY","Our words are covering about "+pct+"% of them."],["HOST","We'll try to be more."]],
+         ["TALLY","Our words are covering about "+pct+"% of them."],["MGMT","Let's get that to "+Math.max(1,Math.ceil(pct*2))+"% by end of quarter."]],
          "screen.width × screen.height; words measured with getClientRects",0); },
   function(){ var dark=matchMedia("(prefers-color-scheme: dark)").matches;
     if(dark) say([["GRAND","Your system prefers dark mode. Of course it does. We are a mysterious people."]],"prefers-color-scheme: dark",0);
     else say([["LIZARD","Your system is in light mode. Bright. Like opening the fridge at night."]],"prefers-color-scheme: light",0); },
   function(){ var n=history.length;
-    if(n<=1) say([["GOSSIP","This tab has no history. Its back button goes nowhere."],["GOSSIP","You opened a brand new tab just for us."],
-                  ["HOST","Nobody has ever opened a tab just for us."],["TALLY","We've existed for "+dur(Date.now()-t0)+"."]],"history.length = "+n,0);
+    if(n<=1) say([["GOSSIP","This tab has no history. Its back button goes nowhere."],["GOSSIP","You opened a brand new tab just for us."],["HOST","We'll try to deserve it."]],"history.length = "+n,0);
     else say([["GOSSIP","This tab's back button holds "+plural(n-1,"other page")+". You were somewhere before this."],
               ["GOSSIP","I won't ask where. I can't. I've tried."]],"history.length = "+n,0); },
   function(){ if(!matchMedia("(pointer: coarse)").matches) return false;
@@ -356,7 +366,7 @@ var ambient=[
   function(){ if(!reduced) return false;
     say([["HOST","Your system asks for less motion. Understood. Nobody here will move. We'll just talk."]],"prefers-reduced-motion: reduce",0); },
   function(){ var w=innerWidth,h=innerHeight;
-    say([["TALLY","Your window is "+fmt(w)+" by "+fmt(h)+"."],["HOST","It's a lovely window. We live in it now."]],"innerWidth × innerHeight",0); },
+    say([["TALLY","Your window is "+fmt(w)+" by "+fmt(h)+"."],["XBTN","Nice window. Shame about the corner."],["TALLY","The X is in the corner."],["XBTN","I know where I am."]],"innerWidth × innerHeight",0); },
   function(){ dayThought(); },
   function(){ if(!navigator.onLine) return false;
     say([["GOSSIP","You're online. The whole internet is right there."],["HOST","And we haven't sent it a single thing about you."],
@@ -374,9 +384,11 @@ function ambientTick(){
 
 /* ----- time on page ----- */
 var milestones=[
-  [60000,function(){say([["TALLY","One minute on a page with no content."],["MGMT","I'm calling that retention."]],"1 minute since you pressed Listen",1)}],
-  [180000,function(){say([["HOST","Three minutes! Can I get you anything?"],["HOST","I can't get you anything. I'm a page."]],"3 minutes since you pressed Listen",1)}],
-  [300000,function(){say([["MGMT","Five minutes. This is going in your review. Positively. I think."]],"5 minutes since you pressed Listen",1)}],
+  [60000,function(){say([["TALLY","One minute."],["MGMT","I'm calling that retention."],["XBTN","I'm calling it a minute."]],"1 minute since you pressed Listen",1)}],
+  [180000,function(){say([["HOST","Three minutes! Can I get you anything? Water? A chair?"],["TALLY","You already have a chair."],["HOST","A second chair."]],"3 minutes since you pressed Listen",1)}],
+  [300000,function(){say([["MGMT","Five minutes. Time for your performance review."],
+       ["TALLY",plural(leaves,"tab switch").replace("switchs","switches")+". "+plural(clicks,"click")+" on nothing. "+plural(exits,"trip")+" up to the X."],
+       ["MGMT","Mixed. I'm going to say mixed."],["GOSSIP","And you took "+(Math.round(tookListen*10)/10)+" seconds to press Listen."],["MGMT","We've all been thinking about it."]],"5 minutes since Listen; counts from this visit",1)}],
   [600000,function(){say([["LIZARD","Ten minutes. Drink some water."],["LIZARD","That one isn't a joke. I just think you should."]],"10 minutes since you pressed Listen",1)}],
   [1200000,function(){
     if(bat){var p=Math.round(bat.level*100); say([["DREAD","Twenty minutes. Your battery is at "+p+"%. I just thought you'd like to know. I wouldn't like to know."]],"20 minutes; navigator.getBattery(): "+p+"%",1);}
@@ -427,7 +439,7 @@ function checkDist(){
   if(dist>=25000 && !distSaid[25]){distSaid[25]=1; var trips=Math.floor(dist/sw);
     say([["CURSOR","Twenty-five thousand pixels."],["TALLY",fmt(dist)+". That's "+plural(trips,"full trip")+" across your screen."],["CURSOR","And not one of them was to anywhere."]],"pointermove total: "+fmt(dist)+" px; screen.width = "+fmt(sw),1);}
   if(dist>=60000 && !distSaid[60]){distSaid[60]=1; say([["CURSOR","Sixty thousand pixels. Where are we even going."],["HOST","Nowhere. That's the nice part."]],"pointermove total: "+fmt(dist)+" px",1);}
-  if(dist>=120000 && !distSaid[120]){distSaid[120]=1; say([["GRAND","One hundred and twenty thousand pixels. Ships have been named for less."]],"pointermove total: "+fmt(dist)+" px",1);}
+  if(dist>=120000 && !distSaid[120]){distSaid[120]=1; say([["MGMT","One hundred and twenty thousand pixels of cursor travel. Please submit it as mileage."]],"pointermove total: "+fmt(dist)+" px",1);}
 }
 
 addEventListener("click",function(e){
@@ -447,11 +459,11 @@ addEventListener("keydown",function(e){
   if(k==="F12" || (c&&e.shiftKey&&(k==="I"||k==="i"||k==="J"||k==="j"||k==="C"||k==="c"))){
     once("dev",function(){say([["GOSSIP","Opening my insides? Go ahead. Look at the Network tab."],["HOST","Nothing goes out. We don't even have a door."]],"keydown: "+(k==="F12"?"F12":"Ctrl+Shift+"+k.toUpperCase()),3)}); return;
   }
-  if(c&&(k==="s"||k==="S")){ once("save",function(){say([["TALLY","You tried to save a page that is mostly empty."],["TALLY","It will save. It will still be mostly empty."]],"keydown: Ctrl+S",3)}); return; }
+  if(c&&(k==="s"||k==="S")){ once("save",function(){say([["GOSSIP","You're saving us? For later? Who else are you going to show?"]],"keydown: Ctrl+S",3)}); return; }
   if(c&&(k==="f"||k==="F")){ once("find",function(){say([["TALLY","You're searching a page that has almost no words on it."],["GRAND","Searching. Always searching. I respect it."]],"keydown: Ctrl+F",3)}); return; }
-  if(c&&(k==="p"||k==="P")){ once("print",function(){say([["MGMT","Printing this? Let's get it on paper. Let's get it in a binder."]],"keydown: Ctrl+P",3)}); return; }
+  if(c&&(k==="p"||k==="P")){ once("print",function(){say([["MGMT","Printing? I'll need three copies. One for me, one for legal, one for the shredder."]],"keydown: Ctrl+P",3)}); return; }
   if(c&&(k==="c"||k==="C")) return; // copy event handles it
-  if(k==="Escape"){ once("esc",function(){say([["HOST","Escape doesn't do anything here."],["HOST","Nothing here does anything. That's the charm."]],"keydown: Escape",3)}); return; }
+  if(k==="Escape"){ once("esc",function(){say([["HOST","Escape? From what? You're safe here."],["MGMT","Pending review."]],"keydown: Escape",3)}); return; }
   if(keys===25 && !keySaid[25]){keySaid[25]=1; say([["TALLY","Twenty-five key presses. There's nowhere to type. I'm not saying anything."],["TALLY","I'm saying it now."]],"25 keydown events, no text box on this page",2);}
 });
 addEventListener("wheel",input,{passive:true});
@@ -473,12 +485,14 @@ document.addEventListener("visibilitychange",function(){
     if(away<2000) say([["TALLY","That was "+d+". That wasn't a visit. That was a flinch."]],r,4);
     else if(leaves===1) say([["GOSSIP","You left for "+d+". Where did you go?"],["GOSSIP","The browser won't tell me. I asked."],["HOST","We changed the tab's title while you were gone. Did you see it?"]],r,4);
     else if(away>=3600000) say([["HOST","You were gone "+d+"."],["HOST","We didn't move. We can't move."]],r,4);
-    else if(away>=300000) say([["HOST","You were gone "+d+". I kept your seat warm."],["TALLY","There's no seat."],["HOST","I kept it warm anyway."]],r,4);
+    else if(away>=300000) say([["HOST","You were gone "+d+". I kept your seat warm."],["TALLY","There's no seat."],["XBTN","You could have closed us instead. It's quicker. I'm right up here."]],r,4);
     else if(leaves===2) say([["TALLY","That's twice now."],["GOSSIP",d+" this time. Was it somebody better?"],["HOST","Don't answer that."],["GOSSIP","Answer that."]],r,4);
-    else if(leaves===3) say([["HOST","Three times. I'll try to be more interesting."],["HOST","I don't know how. I'm a page."]],r,4);
+    else if(leaves===3) say([["HOST","Three times. I'll try to be more interesting."],["XBTN","Or they could just leave properly. Up here."],["GOSSIP","Nobody asked you."]],r,4);
     else if(leaves===5) say([["MGMT","Five tab switches. That's not distraction. That's a workflow."]],r,4);
     else if(leaves===10) say([["TALLY","Ten. You've left us ten times."],["GOSSIP","And come back ten times."],["TALLY","That's also true."]],r,4);
-    else say([["GOSSIP","Back. "+d+" that time. I'm writing all of these down."],["TALLY","I'm writing them down. You're just feeling them."]],r,4);
+    else say(pickOne([[["GOSSIP","Back. "+d+" that time. Where was it?"],["GOSSIP","Don't tell me. I'll make something up."]],
+                       [["MGMT","Welcome back. Please log your "+d+" away in the shared tracker."]],
+                       [["TALLY","Time away: "+d+". Times away: "+leaves+"."],["HOST","Every time, we let you back in."]]]),r,4);
     pump();
   }
 });
@@ -514,7 +528,7 @@ document.addEventListener("selectionchange",function(){
   if(!started) return;
   var s=getSelection(); if(!s||s.isCollapsed||String(s).trim().length<4) return;
   if(!$("feed").contains(s.anchorNode)) return;
-  once("sel",function(){setTimeout(function(){say([["HOST","You highlighted us."],["HOST","We're touched. We're physically touched. By the selection."]],"selectionchange inside the thoughts",3)},600)});
+  once("sel",function(){setTimeout(function(){say([["HOST","You highlighted us."],["HOST","We're touched."]],"selectionchange inside the thoughts",3)},600)});
 });
 var rT=null, dpr=devicePixelRatio;
 addEventListener("resize",function(){
@@ -535,7 +549,7 @@ addEventListener("resize",function(){
 document.addEventListener("fullscreenchange",function(){
   if(!started) return;
   if(document.fullscreenElement) say([["GRAND","Fullscreen. Finally. The respect we deserve."]],"fullscreenchange",3);
-  else say([["GRAND","Out of fullscreen. Demoted."]],"fullscreenchange",3);
+  else say([["XBTN","Out of fullscreen. Hello again."],["GRAND","Nobody missed you."]],"fullscreenchange",3);
 });
 addEventListener("offline",function(){ if(started) say([["HOST","Your internet just left."],["HOST","We're fine. We never needed it."]],"offline event",4); });
 addEventListener("online",function(){ if(started) say([["GOSSIP","The internet's back."],["GOSSIP","We didn't tell it anything about you. We didn't tell it anything."]],"online event",4); });
@@ -554,15 +568,20 @@ $("go").onclick=function(){
     var ln=[["TALLY","Visit number "+visits+". Last time you stayed "+dur(last.ms)+" and woke "+lw+" of 9 of us."]];
     if(nav.type==="reload") ln.push(["GOSSIP","Then you reloaded. Did you think we'd stop?"]);
     else if(last.x) ln=ln.concat([["XBTN","Something ended this page last time."],["GOSSIP","It was the X."],["XBTN","I'm not saying it was me."]]);
-    else ln.push(["HOST","Welcome back. Nothing's changed. Nothing here ever changes."]);
+    else ln.push(["HOST","Welcome back. Some of us have new material."]);
     say(ln,"localStorage: visit "+visits+", last stay "+Math.round(last.ms/1000)+" s, "+lw+" voices woken",5);
   } else if(nav.type==="reload"){
     say([["GOSSIP","You reloaded."],["TALLY","Visit number "+visits+". I keep the number in your browser. Just the number."],["HOST","Did you think we'd stop?"]],"performance navigation type = reload; localStorage visit count = "+visits,5);
   } else if(visits>1){
-    say([["TALLY","Visit number "+visits+". I keep the number in your browser. Just the number."],["HOST","Welcome back. Nothing's changed. Nothing here ever changes."]],"localStorage visit count = "+visits,5);
+    say([["TALLY","Visit number "+visits+". I keep the number in your browser. Just the number."],["HOST","Welcome back. Some of us have new material."]],"localStorage visit count = "+visits,5);
   } else {
-    say([["TALLY","One click. Noted. From now on I count everything."],["HOST","Welcome! There's nothing here. Make yourself at home."],
-         ["GRAND","Give us a minute. We're about to become the most important thing on your screen."],["TALLY","We're the only thing on the page."],["GRAND","Exactly."]],"you pressed Listen",5);
+    var took=(performance.now()/1000); tookListen=took;
+    var tk=took<10?(Math.round(took*10)/10)+" seconds":dur(took*1000);
+    say([["TALLY","You took "+tk+" to press Listen."],
+         took<4?["MGMT","Decisive. I like that. I'm putting you on a project."]:
+         took<30?["MGMT","Solid. Not rushed. Not reckless. I'm putting you on a project."]:
+                 ["MGMT",tk+" to press one button. Let's talk about that in your review."],
+         ["HOST","Welcome! Make yourself at home."]],"performance.now() when you pressed Listen: "+(Math.round(took*10)/10)+" s",5);
   }
   timeThought();
   var gb=navigator.getBattery?navigator.getBattery():null;

@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Your Browser Has Thoughts",
+  "version": "0.1.0",
+  "description": "Nine inner voices that now and then say one true thing about your browsing. Nothing leaves your browser.",
+  "permissions": ["storage"],
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["thoughts.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Your Browser Has Thoughts",
+    "default_icon": {"16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png"}
+  },
+  "icons": {"16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png"}
+}

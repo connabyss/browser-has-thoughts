@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Your Browser Has Thoughts</title>
+<style>
+body{margin:0;width:280px;background:#18171d;color:#e7e5ee;font:14px/1.45 system-ui,sans-serif}
+.w{padding:14px 16px 16px;display:grid;gap:12px}
+h1{font:700 17px/1.2 Georgia,"Palatino Linotype",serif;margin:0}
+.s{color:#9c99a8;font-size:12px;margin:0}
+label{display:flex;justify-content:space-between;align-items:center;gap:10px}
+select,button{font:inherit;color:#e7e5ee;background:#24232c;border:1px solid #3a3844;border-radius:4px;padding:6px 8px}
+button{cursor:pointer;width:100%}
+button:hover,button:focus-visible,select:focus-visible{border-color:#b48cff;outline:none}
+#status{font-size:12px;color:#b48cff;min-height:1em;margin:0}
+</style>
+</head>
+<body>
+<div class="w">
+  <h1>Your Browser Has Thoughts</h1>
+  <p class="s">Everything stays on this computer. Nothing is sent anywhere.</p>
+  <label for="on">Voices on <input type="checkbox" id="on"></label>
+  <label for="freq">How often
+    <select id="freq">
+      <option value="rare">Rarely (every 25 min at most)</option>
+      <option value="normal">Sometimes (every 10 min at most)</option>
+      <option value="often">Often (every 4 min at most)</option>
+    </select>
+  </label>
+  <button id="now">Say something now</button>
+  <button id="hush">Never talk on this site</button>
+  <button id="unmute" hidden>Stop the quiet hour</button>
+  <p id="status"></p>
+</div>
+<script src="popup.js"></script>
+</body>
+</html>
