@@ -249,15 +249,66 @@
     if (/(^|\.)(claude\.ai|chatgpt\.com|chat\.openai\.com|gemini\.google\.com|perplexity\.ai)$/.test(host)) return { lines: [["GOSSIP", "You're talking to another voice on " + host + "."], ["HOST", "We're right here, you know."], ["MGMT", "We can't answer questions. We can only make them worse."]], r: "the site's address" };
     if (/(^|\.)(mail\.google\.com|outlook\.live\.com|outlook\.office\.com|mail\.proton\.me)$/.test(host)) return { lines: [["DREAD", "Email."], ["MGMT", "Per my last thought."]], r: "the site's address" };
     if (/(^|\.)(amazon\.[a-z.]+|ebay\.[a-z.]+|etsy\.com)$/.test(host) && /cart/i.test(location.pathname)) return { lines: [["LIZARD", "The cart. The hunt is nearly over."], ["MGMT", "Is this an approved purchase? Who approved it? Was it me?"]], r: "the address has \"cart\" in it" };
-    if (T) {
-      var sc = screens();
-      return { lines: pick([
-        [["GOSSIP", "Ooh. \u201C" + T + "\u201D. What's this one?"], ["CURSOR", "I'll find out. I'll hover over things."]],
-        [["MGMT", "\u201C" + T + "\u201D. I'll add it to the agenda."]],
-        [["TALLY", "\u201C" + T + "\u201D. " + n(sc, "screen", "screens") + " tall."], sc >= 8 ? ["LIZARD", "Nobody is reading all of that. Not even you."] : ["HOST", "A cozy one."]]
-      ]), r: "the tab title; page height divided by window height is " + sc };
+    if (host === "connabyss.github.io") {
+      var mineT = ownSites(path);
+      if (mineT) return mineT.concat(generic(T));
     }
+    return generic(T);
+  }
+
+  // our sibling pages on connabyss.github.io
+  function ownSites(path) {
+    var p = path[0] || "", body = (document.body && document.body.innerText) || "";
+    if (p === "dont-close-this-tab") {
+      var v = /visit (\d+)/.exec(body), out = [];
+      out.push({ key: "dctt:meet", lines: [["GOSSIP", "Wait. Someone's in this tab. There's a face. It's looking at us."], ["HOST", "Hello in there! We're the ones in the corner!"],
+        ["XBTN", "I know that face. It's the one that panics whenever you come up to see me."], ["MGMT", "Let's not get involved. I've already gotten involved."]]
+        .concat(v ? [["TALLY", "The page says visit " + v[1] + ". You keep coming back to it."], ["GRAND", "Loyalty."]] : []),
+        r: "the address is connabyss.github.io/dont-close-this-tab" + (v ? "; the page says visit " + v[1] : "") });
+      out.push({ key: "dctt:2", lines: [["XBTN", "Between us, I'd never close this one."], ["DREAD", "You're the X Button. Closing it is all you do."], ["XBTN", "Not this one."]], r: "still on Don't Close This Tab" });
+      out.push({ key: "dctt:3", lines: [["LIZARD", "It's watching you. Stay still. It can't hurt you if you stay still."], ["HOST", "It wants you to stay, that's all."], ["GOSSIP", "So do we, honestly."]], r: "still on Don't Close This Tab" });
+      return out;
+    }
+    if (p === "browser-has-thoughts") return [{ key: "bht:home", lines: [["GRAND", "Our old house. The website. We used to live in there, one page at a time."], ["TALLY", "Same nine voices."], ["HOST", "It looks smaller than I remember."]], r: "the address is connabyss.github.io/browser-has-thoughts" }];
+    if (p === "cold-case") return [{ key: "cc:home", lines: [["DREAD", "The Cold Case Unit. Somebody killed all these projects."], ["GOSSIP", "Was it you? It was you, wasn't it."], ["MGMT", "No comment. Management never has a comment."]], r: "the address is connabyss.github.io/cold-case" }];
     return null;
+  }
+
+  // what any page has on it: title, headline, prices, videos, password boxes, errors, length, pictures, links
+  function generic(T) {
+    var out = [], key = host + location.pathname;
+    var h1el = q("h1"), h1 = h1el ? clip(h1el.textContent, 70) : "";
+    var site = clip(((q('meta[property="og:site_name"]') || {}).content || ""), 30);
+    var body = ((document.body && document.body.innerText) || "").slice(0, 300000), wc = words(body);
+    var err = /\b(404|not found|page not found|500|something went wrong|access denied)\b/i;
+    if (err.test(T + " " + h1)) out.push({ key: key + ":err", lines: [["DREAD", "\u201C" + clip(h1 || T, 50) + "\u201D. A dead end."], ["HOST", "It's all right. Everybody gets lost."], ["MGMT", "Go back. Pretend this never happened. I'll pretend too. I won't."]], r: "the page's title or headline" });
+    if (q('input[type="password"]')) out.push({ key: key + ":pw", lines: [["MGMT", "A password box. Relax. Nobody in here can see what goes in it."], ["GOSSIP", "I'd love to know, though."], ["TALLY", "We don't even count the keys you press in a password box."]], r: "this page has a password field" });
+    if (/\bcookies?\b/i.test(body.slice(0, 20000)) && Array.prototype.some.call(document.querySelectorAll("button"), function (b) { return /^(accept|accept all|allow all|i agree|agree|got it)$/i.test((b.textContent || "").trim()); }))
+      out.push({ key: host + ":cookies", lines: [["GOSSIP", "They want to give you cookies."], ["HOST", "Not the good kind."], ["LIZARD", "Accept them. Or don't. Just stop moving."]], r: "the page mentions cookies and has an Accept button" });
+    if (T) out.push({ key: key + ":t", lines: pick([
+      [["GOSSIP", "Ooh. \u201C" + T + "\u201D" + (site && T.indexOf(site) < 0 ? ", on " + site : "") + ". What's this one?"], ["CURSOR", "I'll find out. I'll hover over things."]],
+      [["MGMT", "\u201C" + T + "\u201D. I'll add it to the agenda."], ["MGMT", "It's the only thing on the agenda."]]
+    ]), r: "the tab title" + (site ? " and the site's name" : "") });
+    var prices = body.match(/[$\u20AC\u00A3]\s?\d{1,3}(?:,\d{3})*(?:\.\d{2})?/g) || [];
+    if (prices.length) {
+      var val = function (p) { return parseFloat(p.replace(/[^\d.]/g, "")) || 0; };
+      var max = prices.reduce(function (m, p) { return val(p) > val(m) ? p : m; }, prices[0]);
+      out.push({ key: key + ":price", lines: prices.length === 1 ? [["GOSSIP", "I see a price. " + prices[0] + ". Are we buying something?"], ["MGMT", "Is this an approved purchase? Who approved it? Was it me?"]]
+        : [["TALLY", n(prices.length, "price", "prices") + " on this page. The biggest one says " + max + "."], ["LIZARD", "Hunting."], ["MGMT", "Is any of this an approved purchase?"]], r: "money amounts in the page's text" });
+    }
+    var vids = document.querySelectorAll("video");
+    if (vids.length && !/(^|\.)youtube\.com$/.test(host)) {
+      var playing = Array.prototype.some.call(vids, function (v) { return !v.paused; });
+      out.push({ key: key + ":vid", lines: [["LIZARD", "There's a video on this page." + (playing ? " It's playing." : "") + " Moving pictures. Stay warm."]], r: n(vids.length, "video", "videos") + " on this page" + (playing ? ", one playing" : "") });
+    }
+    if (h1 && T.indexOf(h1) < 0 && h1.length >= 8) out.push({ key: key + ":h1", lines: [["GOSSIP", "The big headline says \u201C" + h1 + "\u201D."], ["DREAD", "Big if true."], ["TALLY", "It's true that it says it."]], r: "the page's main heading" });
+    if (wc >= 1500) { var rnd = Math.round(wc / 100) * 100; out.push({ key: key + ":long", lines: [["TALLY", "This page is about " + rnd.toLocaleString() + " words. Around " + Math.round(wc / 238) + " minutes, if you read all of it."], ["DREAD", "You won't."], ["GRAND", "They might. Look at them."]], r: "the page's visible text, " + wc + " words, at 238 words a minute" }); }
+    else if (wc && wc < 60) out.push({ key: key + ":short", lines: [["CURSOR", "Hardly anything here. " + n(wc, "word", "words") + ". I've seen it all already."]], r: "the page's visible text: " + n(wc, "word", "words") });
+    var imgs = document.images.length, links = document.links.length;
+    if (imgs >= 25) out.push({ key: key + ":img", lines: [["GRAND", imgs + " pictures on this page. A gallery. A museum."], ["CURSOR", "I'll point at each one."]], r: "images on this page: " + imgs });
+    if (links >= 200) out.push({ key: key + ":links", lines: [["CURSOR", links + " links on this page. I could take you anywhere. You'll pick one. You always pick one."]], r: "links on this page: " + links });
+    if (q("textarea")) out.push({ key: key + ":ta", lines: [["MGMT", "A big text box. Choose your words carefully. I'll be counting the backspaces."], ["TALLY", "I'll be counting the backspaces."]], r: "this page has a text area" });
+    return out.length ? out : null;
   }
 
   // pick what to say about this page, remembering what's already been said (across tabs, for 3 days):
@@ -292,7 +343,7 @@
       '<style>' +
       '.p{font:14px/1.4 system-ui,"Segoe UI",sans-serif;color:#e7e5ee;background:#141318;border:1px solid #34323e;border-radius:10px;' +
       'box-shadow:0 10px 34px rgba(0,0,0,.45);width:330px;max-width:calc(100vw - 32px);height:min(440px,60vh);display:flex;flex-direction:column;overflow:hidden}' +
-      '.hd{display:flex;align-items:center;gap:6px;padding:9px 10px 9px 12px;border-bottom:1px solid #2a2832;background:#1a1920}' +
+      '.hd{cursor:move;touch-action:none;user-select:none;display:flex;align-items:center;gap:6px;padding:9px 10px 9px 12px;border-bottom:1px solid #2a2832;background:#1a1920}' +
       '.ti{font:700 13px/1.2 Georgia,"Palatino Linotype",serif;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
       '.ti small{font:500 11px system-ui,sans-serif;color:#8f8c9c;margin-left:6px}' +
       '.ib{font:600 11px/1 system-ui,sans-serif;color:#9c99a8;background:none;border:1px solid #34323e;border-radius:5px;padding:5px 7px;cursor:pointer}' +
@@ -317,7 +368,7 @@
       '@media (prefers-reduced-motion:reduce){.m{animation:none}}' +
       '</style>' +
       '<div class="w"><div class="p" role="log" aria-label="Your Browser Has Thoughts chat">' +
-      '<div class="hd"><div class="ti">#your-browser<small>9 voices here</small></div>' +
+      '<div class="hd"><div class="ti" title="Drag to move">#your-browser<small>9 voices here</small></div>' +
       '<button class="ib" data-a="r" title="Show where every line came from">receipts</button>' +
       '<button class="ib" data-a="q" title="No new messages for an hour">quiet</button>' +
       '<button class="ib" data-a="m" title="Shrink the chat" aria-label="Shrink the chat">–</button></div>' +
@@ -328,9 +379,26 @@
     input = root.querySelector("input"); quiet = root.querySelector('[data-a="q"]');
     root.querySelector('[data-a="r"]').onclick = function () {
       receiptsOn = !receiptsOn; list.classList.toggle("r", receiptsOn); this.classList.toggle("on", receiptsOn);
-      put({ ui: { open: open, receipts: receiptsOn } }); scrollDown();
+      put({ ui: { open: open, receipts: receiptsOn, pos: pos } }); scrollDown();
     };
     root.querySelector('[data-a="m"]').onclick = function () { setOpen(false); };
+    // drag the chat anywhere by its title bar; it stays where you put it
+    var hd = root.querySelector(".hd"), drag = null;
+    hd.addEventListener("pointerdown", function (e) {
+      if (e.target.closest && e.target.closest("button")) return;
+      var r = holder.getBoundingClientRect();
+      drag = { x: e.clientX, y: e.clientY, r: innerWidth - r.right, b: innerHeight - r.bottom };
+      try { hd.setPointerCapture(e.pointerId); } catch (x) {}
+      e.preventDefault();
+    });
+    hd.addEventListener("pointermove", function (e) {
+      if (!drag) return;
+      placeAt(drag.r - (e.clientX - drag.x), drag.b - (e.clientY - drag.y));
+    });
+    hd.addEventListener("pointerup", function () {
+      if (!drag) return; drag = null;
+      put({ ui: { open: open, receipts: receiptsOn, pos: pos } });
+    });
     pill.onclick = function () { setOpen(true); };
     quiet.onclick = function () {
       get(function (s) {
@@ -350,12 +418,20 @@
     ["keydown", "keyup", "keypress"].forEach(function (k) { input.addEventListener(k, function (e) { e.stopPropagation(); }); });
     document.documentElement.appendChild(holder);
   }
+  var pos = null;
+  function placeAt(r, b) {
+    var w = holder.offsetWidth || 330, h = holder.offsetHeight || 60;
+    r = Math.max(0, Math.min(innerWidth - w, r)); b = Math.max(0, Math.min(innerHeight - h, b));
+    pos = { r: r, b: b };
+    holder.style.right = r + "px"; holder.style.bottom = b + "px";
+  }
   function inPanel(e) { try { return holder && e.composedPath().indexOf(holder) >= 0; } catch (x) { return false; } }
   function setOpen(v) {
     open = v; if (v) unread = 0;
+    if (pos) setTimeout(function () { placeAt(pos.r, pos.b); }, 0);
     root.querySelector(".w").classList.toggle("closed", !v);
     updatePill();
-    put({ ui: { open: v, receipts: receiptsOn } });
+    put({ ui: { open: v, receipts: receiptsOn, pos: pos } });
     if (v) scrollDown();
   }
   function updatePill() { pill.innerHTML = "💬 Thoughts" + (unread ? " <b>· " + unread + " new</b>" : ""); }
@@ -654,6 +730,7 @@
   addEventListener("touchstart", onInput, { passive: true, capture: true });
   addEventListener("keydown", function (e) {
     if (inPanel(e)) return;
+    if (e.target && e.target.type === "password") return;
     onInput();
     if (e.key === "Backspace" && ++backspaces === 40) event("", function () {
       return { lines: [["TALLY", "40 backspaces on this page. I don't know what you deleted. I only count."], ["XBTN", "Closing things one letter at a time. I see what you're doing."]], r: "40 Backspace presses on this page (counted, never read)" };
@@ -683,6 +760,42 @@
       }, 1);
     }
   }, { passive: true });
+
+  // pressing buttons (links take you away before anyone can answer, so only buttons)
+  var lastClick = 0;
+  document.addEventListener("click", function (e) {
+    if (inPanel(e)) return;
+    var b = e.target && e.target.closest ? e.target.closest('button, [role="button"], input[type="submit"]') : null;
+    if (!b || Date.now() - lastClick < 45000) return;
+    var label = clip(b.getAttribute("aria-label") || b.textContent || b.value || "", 40);
+    if (!label || label.length < 2) return;
+    var L = null, Q = "\u201C" + label + "\u201D";
+    if (/add to (cart|basket|bag)|buy now|checkout|place (your )?order|purchase/i.test(label)) L = [["MGMT", "You pressed " + Q + ". I'm going to need a receipt. A real one."], ["LIZARD", "The hunt is over."]];
+    else if (/delete|remove|discard/i.test(label)) L = [["DREAD", "You pressed " + Q + ". It's gone. Probably. Things are rarely gone."]];
+    else if (/subscribe|follow|join/i.test(label)) L = [["GOSSIP", "You pressed " + Q + "! Who is it? Tell me everything."]];
+    else if (/sign out|log out|logout/i.test(label)) L = [["HOST", "Signing out? That's fine. We don't sign out. We live here."]];
+    else if (/^(like|star|upvote|heart|favou?rite)/i.test(label)) L = [["GRAND", "You pressed " + Q + ". A small act of greatness."]];
+    else if (/send|post|submit|reply|comment|publish/i.test(label)) L = [["MGMT", "You pressed " + Q + ". It's out there now. I'd have edited it."], ["HOST", "I'm sure it was lovely."]];
+    else if (/cancel|close|dismiss|no thanks|not now/i.test(label)) L = [["XBTN", "You pressed " + Q + ". That's practically my job. I'm not jealous."]];
+    else if (Math.random() < 0.3) L = pick([[["CURSOR", Q + ". Good click. I felt that."]], [["TALLY", "A click on " + Q + ". Noted."], ["MGMT", "Strong click. Confident. Possibly a mistake."]]]);
+    if (!L) return;
+    lastClick = Date.now();
+    event("", function () { return { lines: L, r: "you pressed a button labeled " + Q }; }, 1);
+  }, true);
+  var lastHl = 0;
+  document.addEventListener("mouseup", function (e) {
+    if (inPanel(e) || Date.now() - lastHl < 90000) return;
+    setTimeout(function () {
+      var t = String(getSelection() || "").trim(), w = words(t);
+      if (w < 4 || w > 300 || Math.random() < 0.5) return;
+      lastHl = Date.now();
+      var first = clip(t.split(/\s+/).slice(0, 7).join(" "), 50);
+      event("", function () { return { lines: pick([
+        [["GOSSIP", "You highlighted \u201C" + first + (w > 7 ? "\u2026" : "") + "\u201D. Is that the important part?"], ["TALLY", n(w, "word", "words") + " highlighted."]],
+        [["MGMT", "Highlighting. Good. " + n(w, "word", "words") + " flagged for follow-up."], ["MGMT", "I'll never follow up."]]
+      ]), r: "the text you highlighted (" + n(w, "word", "words") + ")" }; }, 1);
+    }, 50);
+  });
 
   // copying (only how many words, never which)
   var lastCopy = 0;
@@ -714,7 +827,7 @@
       }
       if (Math.random() < 0.35) event("", function () {
         return { lines: pick([
-          [["XBTN", "Up here. I'm always up here."]],
+          host === "connabyss.github.io" && /^\/dont-close-this-tab/.test(location.pathname) ? [["XBTN", "You came up here, and the face in the tab saw you do it."], ["XBTN", "We have that in common now."]] : [["XBTN", "Up here. I'm always up here."]],
           [["XBTN", "You keep coming up here and not clicking me."]],
           [["XBTN", "Closer. Closer. No? Fine."]],
           [["GOSSIP", "Going up to see the X again? What do you two even talk about?"], ["XBTN", "Endings."]],
@@ -757,6 +870,7 @@
         if (Date.now() - lastInput > 90000 || !document.hasFocus()) return;
       }
       var c = dayTalk(s)[0];
+      if (!c.key) { var pt = pageTalk(s); if (pt) { post(pt.lines, pt.r, force ? 2 : 0, force); return; } }
       if (c.key) { s.said[c.key] = Date.now(); if (c.extra === "ask") s.said.ask = Date.now(); put({ said: s.said }); }
       var after = c.extra === "ask" ? function () {
         showChoices([{ label: "Yes, it's work", fn: function () { answerWork(true); } }, { label: "No", fn: function () { answerWork(false); } }]);
@@ -787,6 +901,7 @@
     s.room.forEach(function (m) { if (m.t && m.v !== "YOU") recent[m.t] = m.ts; });
     list.classList.toggle("r", receiptsOn); root.querySelector('[data-a="r"]').classList.toggle("on", receiptsOn);
     setOpen(ui.open !== false);
+    if (ui.pos) placeAt(ui.pos.r, ui.pos.b);
     render(s);
     booting = false;
     setTimeout(arrive, 2500);
