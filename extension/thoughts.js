@@ -34,6 +34,7 @@
   }
   function mins(ms) {
     var m = Math.floor(ms / 60000);
+    if (m < 1) return "under a minute";
     if (m < 60) return m + (m === 1 ? " minute" : " minutes");
     var h = Math.floor(m / 60), r = m % 60;
     return h + (h === 1 ? " hour" : " hours") + (r ? " " + r + " min" : "");
@@ -46,20 +47,23 @@
     chrome.storage.local.get(null, function (s) {
       s = s || {};
       if (s.day !== today()) {
-        s = { settings: s.settings, day: today(), hosts: {}, hops: s.hops || [], lastShown: s.lastShown || 0, said: {}, firstDone: false, used: s.used || {} };
+        s = { installedDay: s.installedDay, settings: s.settings, day: today(), hosts: {}, hops: s.hops || [], lastShown: s.lastShown || 0, said: {}, firstDone: false, used: s.used || {} };
       }
       s.settings = s.settings || { on: true, freq: "normal", muteUntil: 0, hushed: {} };
       s.settings.hushed = s.settings.hushed || {};
       s.hosts = s.hosts || {};
       s.said = s.said || {};
       s.hops = s.hops || [];
+      if (s.firstDay !== today()) { s.firstHost = null; s.firstAt = null; }
+      if (!s.installedDay) { s.installedDay = today(); chrome.storage.local.set({ installedDay: s.installedDay }); }
       cb(s);
     });
   }
   function put(s) { if (alive()) chrome.storage.local.set(s); }
 
   /* ---------- facts we keep (all local) ---------- */
-  var lastInput = Date.now(), idleFrom = null;
+  var lastInput = Date.now(), idleFrom = null, idleAt = 0;
+  addEventListener("focus", function () { lastInput = Date.now(); idleFrom = null; });
   var battery = null;
   try {
     if (navigator.getBattery) navigator.getBattery().then(function (b) { battery = b; }, function () {});
@@ -70,27 +74,31 @@
     var h = s.hosts[host] || { ms: 0, loads: 0 };
     h.loads++;
     s.hosts[host] = h;
-    put({ day: s.day, hosts: s.hosts, said: s.said, settings: s.settings, hops: s.hops, lastShown: s.lastShown, firstDone: s.firstDone, used: s.used || {} });
+    if (!s.firstHost) { s.firstHost = host; s.firstAt = clock(new Date()); s.firstDay = today(); }
+    put({ installedDay: s.installedDay, day: s.day, hosts: s.hosts, said: s.said, settings: s.settings, hops: s.hops, lastShown: s.lastShown, firstDone: s.firstDone, used: s.used || {}, firstHost: s.firstHost, firstAt: s.firstAt, firstDay: s.firstDay });
   });
 
   // on-screen time for this site, counted only while this tab is visible
   var lastTick = Date.now();
-  setInterval(function () {
+  function flush() {
     var now = Date.now(), dt = now - lastTick;
     lastTick = now;
     if (document.hidden || dt > 30000) return;
     get(function (s) {
-      var h = s.hosts[host] || { ms: 0, loads: 1 };
+      var h = s.hosts[host] || { ms: 0, loads: 0 };
       h.ms += dt;
       s.hosts[host] = h;
       put({ day: s.day, hosts: s.hosts });
     });
-  }, 15000);
+  }
+  setInterval(flush, 15000);
+  addEventListener("pagehide", flush);
 
   // tab hopping: each time a tab comes back into view, note the time
   document.addEventListener("visibilitychange", function () {
+    if (document.hidden) { flush(); return; }
     lastTick = Date.now();
-    if (document.hidden) return;
+    lastInput = Date.now(); idleFrom = null;
     get(function (s) {
       var now = Date.now();
       s.hops = s.hops.filter(function (t) { return now - t < 600000; });
@@ -102,7 +110,7 @@
 
   function onInput() {
     var idle = Date.now() - lastInput;
-    if (idle >= 5 * 60000 && !document.hidden) idleFrom = idle;
+    if (idle >= 5 * 60000 && !document.hidden && document.hasFocus()) { idleFrom = idle; idleAt = Date.now(); }
     lastInput = Date.now();
     if (idleFrom) schedule(1500);
   }
@@ -113,7 +121,7 @@
 
   var topExit = false;
   document.addEventListener("mouseout", function (e) {
-    if (!e.relatedTarget && e.clientY <= 0) { topExit = true; schedule(300); }
+    if (!e.relatedTarget && e.clientY <= 0) { topExit = Date.now(); schedule(300); }
   });
 
   /* ---------- the thoughts ---------- */
@@ -139,11 +147,16 @@
   function bank(f) {
     var H = f.host, T = f.t, D = f.day;
     return {
+      firstInstall: [
+        ["n1", ["MGMT", "First website since you installed us: " + H + ". I'll be taking notes. A lot of notes."]],
+        ["n2", ["HOST", "Hello! We just moved in. First site we've seen: " + H + ". I'll be in the corner."]],
+        ["n3", ["XBTN", "You installed nine voices. Your first stop with us is " + H + ". I'm up in the corner if this was a mistake."]]
+      ],
       first: [
         ["f1", ["MGMT", "First website of the day: " + H + ". Bold. Let's see if it pays off."]],
         ["f2", ["MGMT", "Good morning. Today's first site is " + H + ". I've already scheduled a follow-up."], f.hr < 12],
         ["f3", ["HOST", "First site of the day: " + H + ". I'll be in the corner. I live in the corner now."]],
-        ["f5", ["CURSOR", "Morning. I'll be pointing at things today. Mostly where you tell me."]],
+        ["f5", ["CURSOR", "Morning. First stop was " + H + ". I'll be pointing at things all day. Mostly away from the X."], f.hr < 12],
         ["f6", ["XBTN", "First site of the day. I'm up in the corner if you need me. You will need me."]]
       ],
       t10: {
@@ -152,14 +165,14 @@
              ["a4", ["HOST", "Does " + H + " know you're seeing other websites?"]]],
         video: [["v1", ["MGMT", "I'll file " + H + " under professional development."]],
                 ["v2", ["LIZARD", "Moving pictures. Good. Stay still. Stay warm."]],
-                ["v4", ["GOSSIP", "What are we watching? Don't tell me. Is it good? Tell me."]]],
+                ["v4", ["GOSSIP", "What are we watching? Is it good? Is it about people? I love people."]]],
         social: [["s1", ["GOSSIP", "Anyone interesting on " + H + "? Don't tell me. Tell me."]],
                  ["s2", ["CURSOR", "Scroll. Scroll. Scroll. Where does it end?"], ["TALLY", "It doesn't."]],
                  ["s4", ["HOST", "It's very loud on " + H + ". You can sit in the corner with me for a bit."]]],
         shop: [["p1", ["MGMT", "Is this an approved purchase? Who approved it? Was it me?"]],
                ["p2", ["LIZARD", "You are hunting. I respect hunting."]]],
-        code: [["c1", ["MGMT", "Finally, real work. Or a very good impression of it."]],
-               ["c2", ["GRAND", "A builder. A maker of things. An architect of the future."], ["TALLY", "It's been ten minutes."]]],
+        code: [["c1", ["MGMT", "I'll put this down as work. Don't make me regret it."]],
+               ["c2", ["GRAND", "A builder. A maker of things. An architect of the future."], ["TALLY", "For at least ten minutes."]]],
         news: [["n1", ["DREAD", "Whatever " + H + " says, I already feel worse."]],
                ["n2", ["MGMT", "Let's take this offline. All of it. The whole world."]]],
         ai: [["i1", ["GOSSIP", "You're talking to another voice on " + H + ", aren't you."], ["HOST", "We're right here."]],
@@ -171,7 +184,7 @@
       },
       t30: {
         "": [["b1", ["MGMT", "At this point " + H + " is a recurring meeting."]],
-             ["b2", ["LIZARD", "Blink. Now blink again. Good."]],
+             ["b2", ["LIZARD", "Look away from the screen. Look at something far away. A wall counts."]],
              ["b3", ["HOST", "They should give you a key to " + H + "."]]],
         video: [["v3", ["GRAND", "A connoisseur. A critic. A scholar of the couch."]]],
         social: [["s3", ["GOSSIP", "I need to know everything that happened on " + H + ". Who said what."]]],
@@ -199,20 +212,20 @@
         ["l4", ["HOST", "You should get your mail delivered to " + H + "."]]
       ],
       sites: [
-        ["x1", ["TALLY", "I've seen every site you've been on today. I'll never tell. I have no one to tell."]],
-        ["x2", ["GRAND", "An explorer. A pioneer. A person with a lot of tabs."]]
+        ["x1", ["TALLY", "I've counted every site I could see today. I'll never tell anyone. I don't know anyone."]],
+        ["x2", ["MGMT", "That many websites. I'm going to need a summary of each one by end of day."], ["TALLY", "I can do that."], ["MGMT", "Not you."]]
       ],
       sitesBig: [
-        ["x4", ["LIZARD", "Lie down."]],
+        ["x4", ["LIZARD", "That many websites. I'm lying down. One of us has to."]],
         ["x5", ["MGMT", "This isn't browsing anymore. This is a portfolio."]]
       ],
       hops: [
-        ["o1", ["GOSSIP", "Who are you looking for?"]],
+        ["o1", ["GOSSIP", "Tab after tab after tab. Who are you looking for? Is it me?"]],
         ["o2", ["MGMT", "We call that multitasking. We call it that so we don't have to call it something else."]],
         ["o3", ["CURSOR", "Tab. Tab. Tab. Tab."], ["HOST", "Please pick one. I'm in all of them."]]
       ],
       idle: [
-        ["d1", ["CURSOR", "Oh. We're moving again."]],
+        ["d1", ["CURSOR", "Oh. We're moving again. I thought I'd been retired."]],
         ["d2", ["MGMT", "You didn't touch anything for " + f.idle + ". I'll need a note from your doctor."]],
         ["d3", ["LIZARD", "Were you asleep? I was asleep."]],
         ["d4", ["HOST", "You're back! I kept everything exactly where you left it. I couldn't move it anyway."]]
@@ -231,7 +244,7 @@
       ],
       night: [
         ["y2", ["MGMT", "It's " + T + ". Let's wrap up. Let's wrap up for real this time. Let's wrap up."]],
-        ["y3", ["LIZARD", "It's " + T + ". The sun left hours ago. You could follow it."], ["XBTN", "I can show you the way out."]]
+        ["y3", ["LIZARD", "It's " + T + ". Every part of you that isn't your eyes has gone to bed."], ["XBTN", "I can show the eyes the way out."]]
       ],
       skive: [
         ["k1", ["MGMT", "It's " + T + " on a " + D + " and you're on " + H + ". I'm going to pretend I didn't see this. I'm writing it down while I pretend."]],
@@ -263,15 +276,14 @@
     var pool = fresh.length ? fresh : list.slice().sort(function (a, b) { return (used[a[0]] || 0) - (used[b[0]] || 0); }).slice(0, 1);
     var x = pick(pool);
     // lines may be [id, line] or [id, line, condition] or [id, line, line]
-    var lines = [x[1]];
-    if (Array.isArray(x[2])) lines.push(x[2]);
+    var lines = x.slice(1).filter(function (l) { return Array.isArray(l); });
     return { id: x[0], lines: lines };
   }
 
   // Each candidate: {key (said at most once a day), list (of variants), receipt}
   function candidates(s) {
     var out = [], now = new Date(), hr = now.getHours(), wd = now.getDay();
-    var h = s.hosts[host] || { ms: 0, loads: 1 };
+    var h = s.hosts[host] || { ms: 0, loads: 0 };
     var sites = Object.keys(s.hosts).length;
     var hops = s.hops.filter(function (x) { return Date.now() - x < 600000; }).length;
     var k = kind(host);
@@ -280,8 +292,13 @@
     var B = bank(f), slot = Math.floor(Date.now() / 3600000);
     function add(key, list, receipt) { out.push({ key: key, list: list, receipt: receipt }); }
 
-    if (!s.firstDone) add("first", B.first, "first site seen today, at " + f.t);
-    if (topExit) { topExit = false; if (Math.random() < 0.5) add("top", B.top, "your cursor left the page through the top edge"); }
+    if (!s.firstDone && s.firstHost) {
+      var BF = bank(Object.assign({}, f, { host: s.firstHost }));
+      if (s.installedDay === today()) add("first", BF.firstInstall, "first site seen since install: " + s.firstHost + ", at " + s.firstAt);
+      else add("first", BF.first, "first site seen today: " + s.firstHost + ", at " + s.firstAt);
+    }
+    if (topExit && Date.now() - topExit < 10000) { topExit = false; if (Math.random() < 0.5) add("top", B.top, "your cursor left the page through the top edge"); }
+    if (idleFrom && Date.now() - idleAt > 30000) idleFrom = null;
     if (idleFrom) { add("idle" + slot, B.idle, "no mouse, key or scroll on this tab for " + f.idle); idleFrom = null; }
     if (hops >= 15) add("hops" + Math.floor(Date.now() / 1800000), B.hops, hops + " times a tab came into view in the last 10 minutes");
 
@@ -295,18 +312,18 @@
     else if (h.ms >= 30 * 60000) add("t30" + host, (B.t30[k] || []).concat(B.t30[""]), r);
     else if (h.ms >= 10 * 60000) add("t10" + host, (B.t10[k] || []).concat(B.t10[k] ? [] : B.t10[""]), r);
 
-    if (h.loads >= 25) add("lb" + host, B.loadsBig, h.loads + " page loads on this site today");
-    else if (h.loads >= 6) add("l" + host, B.loads, h.loads + " page loads on this site today");
+    if (h.loads >= 25) add("lb" + host, B.loadsBig, "at least " + h.loads + " page loads on this site today");
+    else if (h.loads >= 6) add("l" + host, B.loads, "at least " + h.loads + " page loads on this site today");
 
-    if (sites >= 50) add("sb", B.sitesBig, sites + " different sites seen today");
-    else if (sites >= 15) add("s", B.sites, sites + " different sites seen today");
+    if (sites >= 50) add("sb", B.sitesBig, sites + " different hostnames seen today");
+    else if (sites >= 15) add("s", B.sites, sites + " different hostnames seen today");
 
     if (battery && !battery.charging && battery.level <= 0.2) add("bat" + Math.ceil(f.pct / 5), B.battery, "navigator.getBattery(): " + f.pct + "%, not charging");
 
     if (hr < 5) add("late", B.late, "the clock says " + f.t);
     else if (hr >= 22) add("night", B.night, "the clock says " + f.t);
     if ((wd === 0 || wd === 6) && hr >= 10) add("weekend", B.weekend, "the clock says " + f.day);
-    s._asked = { key: "asked" + Date.now(), list: B.asked, receipt: "you asked; " + f.mins + " of this site on screen today, " + f.loads + " pages, " + f.sites + " sites today" };
+    s._asked = { key: "asked" + Date.now(), list: B.asked, receipt: "you asked; " + f.mins + " of this site on screen today, " + f.loads + (f.loads === 1 ? " page load, " : " page loads, ") + f.sites + (f.sites === 1 ? " hostname" : " hostnames") + " today" };
     return out;
   }
 
