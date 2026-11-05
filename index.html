@@ -152,8 +152,33 @@ function drawRoster(){
     } else li.textContent="? ? ?";
     ul.appendChild(li);
   });
+  if(n===9) finale();
   $("woke").textContent = n===9 ? "You have woken all 9. They will never be quiet now."
                                 : "You have woken "+n+" of 9.";
+}
+var finaleDone=false;
+function finale(){
+  if(finaleDone) return; finaleDone=true;
+  var before=store("ybht_all9")==="1"; store("ybht_all9","1");
+  setTimeout(function(){
+    var el=Date.now()-t0, lines=[
+      ["MGMT","That's everyone. All nine of us. I'm calling a meeting."],
+      ["MGMT","Item one: you."],
+      ["TALLY",dur(el)+" on this page. "+plural(leaves,"tab switch").replace("switchs","switches")+". "+plural(clicks,"click")+" on nothing. "+fmt(dist)+" pixels of cursor."]
+    ];
+    if(bat) lines.push(["DREAD","Battery: "+Math.round(bat.level*100)+"%. I'm not saying anything. I'm just reading it into the minutes."]);
+    else lines.push(["DREAD","Battery: unknown. Still. I'd like that in the minutes."]);
+    lines=lines.concat([
+      ["GOSSIP","And I still don't know where you go when you leave."],
+      ["CURSOR","I know. I go everywhere you go. On this page."],
+      ["GRAND",before?"You've woken all of us before, in this browser. You came back to do it again.":"Nobody has woken all nine of us in this browser before. Nobody."],
+      ["TALLY",before?"That's true. I keep a note.":"That's true. I checked the note. There was no note."],
+      ["LIZARD","Can we sleep now."],
+      ["XBTN","I can help with that."],
+      ["HOST","Meeting over. Please stay."]
+    ]);
+    say(lines,"all 9 voices heard; localStorage says "+(before?"you've done this before":"first time in this browser"),6);
+  },3000);
 }
 var bioDone={};
 function bio(k){
@@ -239,11 +264,13 @@ function timeThought(){
                ["DREAD","Something has gone wrong."]],r,2);
   else if(h<12) say([["MGMT","It's "+t+" on a "+day+". I'm going to call this a meeting."],
                ["HOST","It's a meeting with an empty page."],["MGMT","Most of them are."]],r,2);
-  else if(h<14) say([["LIZARD","It's "+t+". Lunch exists. I'm not telling you what to do. I'm telling you it exists."]],r,2);
+  else if(h<14) say([["LIZARD","It's "+t+". Lunch exists. I'm not telling you what to do. I'm telling you lunch exists."],
+               ["MGMT","Lunch is just a meeting with food."],["LIZARD","Then I love meetings."]],r,2);
   else if(h<18) say([["MGMT","It's "+t+" on a "+day+". I'll log this as research."],
-               ["TALLY","It isn't research."],["MGMT","I'll log that as well."]],r,2);
+               ["TALLY","It isn't research."],["MGMT","I'll log that as well."],
+               ["GOSSIP","Research into what?"],["MGMT","That's confidential."],["TALLY","It's a page with nothing on it."],["MGMT","Which is why it's confidential."]],r,2);
   else if(h<22) say([["HOST","It's "+t+". Of every page in the world you could have opened tonight, you opened one with nothing on it."],
-               ["GRAND","They have taste."]],r,2);
+               ["GRAND","Taste."],["TALLY","Or they clicked a link."],["GRAND","Taste."]],r,2);
   else say([["DREAD","It's "+t+". Midnight is closer than this morning was."],
                ["TALLY","That's just true. It's not even a threat. It's just true."]],r,2);
 }
@@ -396,7 +423,7 @@ addEventListener("pointermove",function(e){
 },{passive:true});
 function checkDist(){
   var sw=screen.width||1;
-  if(dist>=5000 && !distSaid[5]){distSaid[5]=1; say([["CURSOR","Five thousand pixels. I have no legs and I have walked five thousand pixels."]],"pointermove total: "+fmt(dist)+" px",1);}
+  if(dist>=5000 && !distSaid[5]){distSaid[5]=1; say([["CURSOR","Five thousand pixels. I have no legs and I have walked five thousand pixels."],["TALLY",fmt(dist)+"."],["CURSOR","Let me have this."]],"pointermove total: "+fmt(dist)+" px",1);}
   if(dist>=25000 && !distSaid[25]){distSaid[25]=1; var trips=Math.floor(dist/sw);
     say([["CURSOR","Twenty-five thousand pixels."],["TALLY",fmt(dist)+". That's "+plural(trips,"full trip")+" across your screen."],["CURSOR","And not one of them was to anywhere."]],"pointermove total: "+fmt(dist)+" px; screen.width = "+fmt(sw),1);}
   if(dist>=60000 && !distSaid[60]){distSaid[60]=1; say([["CURSOR","Sixty thousand pixels. Where are we even going."],["HOST","Nowhere. That's the nice part."]],"pointermove total: "+fmt(dist)+" px",1);}
@@ -447,11 +474,11 @@ document.addEventListener("visibilitychange",function(){
     else if(leaves===1) say([["GOSSIP","You left for "+d+". Where did you go?"],["GOSSIP","The browser won't tell me. I asked."],["HOST","We changed the tab's title while you were gone. Did you see it?"]],r,4);
     else if(away>=3600000) say([["HOST","You were gone "+d+"."],["HOST","We didn't move. We can't move."]],r,4);
     else if(away>=300000) say([["HOST","You were gone "+d+". I kept your seat warm."],["TALLY","There's no seat."],["HOST","I kept it warm anyway."]],r,4);
-    else if(leaves===2) say([["TALLY","That's twice now."],["GOSSIP",d+" this time. Was it somebody better?"]],r,4);
+    else if(leaves===2) say([["TALLY","That's twice now."],["GOSSIP",d+" this time. Was it somebody better?"],["HOST","Don't answer that."],["GOSSIP","Answer that."]],r,4);
     else if(leaves===3) say([["HOST","Three times. I'll try to be more interesting."],["HOST","I don't know how. I'm a page."]],r,4);
     else if(leaves===5) say([["MGMT","Five tab switches. That's not distraction. That's a workflow."]],r,4);
     else if(leaves===10) say([["TALLY","Ten. You've left us ten times."],["GOSSIP","And come back ten times."],["TALLY","That's also true."]],r,4);
-    else say([["GOSSIP","Back again. "+d+" that time."]],r,4);
+    else say([["GOSSIP","Back. "+d+" that time. I'm writing all of these down."],["TALLY","I'm writing them down. You're just feeling them."]],r,4);
     pump();
   }
 });
@@ -470,7 +497,8 @@ document.addEventListener("mouseout",function(e){
     exits++;
     if(exits===1) say([["XBTN","Up here."],["XBTN","I'm always up here."]],"your cursor left the page through the top edge",4);
     else if(exits===2) say([["HOST","Not yet! I haven't said— I don't have anything planned. Stay anyway."]],"cursor left through the top edge, time #2",4);
-    else if(exits===4) say([["XBTN","Still here."],["HOST","Nobody asked you."]],"cursor left through the top edge, time #4",4);
+    else if(exits===3) say([["XBTN","You keep coming up here and not clicking me."],["XBTN","I'm a button. Not clicking a button is the cruellest thing you can do to it."]],"cursor left through the top edge, time #3",4);
+    else if(exits===5) say([["GOSSIP","Five visits to the top of the window. Are you two seeing each other?"],["XBTN","We see each other every time."],["HOST","Nobody asked you."]],"cursor left through the top edge, time #5",4);
     else if(exits===8) say([["TALLY","Eight trips to the top of the window, and you haven't closed us."],["XBTN","I'm starting to think you like them."]],"cursor left through the top edge, time #8",4);
   }
 });
@@ -520,12 +548,21 @@ var nav=(performance.getEntriesByType&&performance.getEntriesByType("navigation"
 $("go").onclick=function(){
   $("start").remove();
   started=true; t0=Date.now(); lastInput=Date.now();
-  if(nav.type==="reload"){
+  var last=null; try{ last=JSON.parse(store("ybht_last")||"null"); }catch(e){}
+  if(last && last.ms>0){
+    var lw=last.woke||0;
+    var ln=[["TALLY","Visit number "+visits+". Last time you stayed "+dur(last.ms)+" and woke "+lw+" of 9 of us."]];
+    if(nav.type==="reload") ln.push(["GOSSIP","Then you reloaded. Did you think we'd stop?"]);
+    else if(last.x) ln=ln.concat([["XBTN","Something ended this page last time."],["GOSSIP","It was the X."],["XBTN","I'm not saying it was me."]]);
+    else ln.push(["HOST","Welcome back. Nothing's changed. Nothing here ever changes."]);
+    say(ln,"localStorage: visit "+visits+", last stay "+Math.round(last.ms/1000)+" s, "+lw+" voices woken",5);
+  } else if(nav.type==="reload"){
     say([["GOSSIP","You reloaded."],["TALLY","Visit number "+visits+". I keep the number in your browser. Just the number."],["HOST","Did you think we'd stop?"]],"performance navigation type = reload; localStorage visit count = "+visits,5);
   } else if(visits>1){
     say([["TALLY","Visit number "+visits+". I keep the number in your browser. Just the number."],["HOST","Welcome back. Nothing's changed. Nothing here ever changes."]],"localStorage visit count = "+visits,5);
   } else {
-    say([["TALLY","One click. You've clicked one time. I'll be counting."],["HOST","Welcome! There's nothing here. Make yourself at home."]],"you pressed Listen",5);
+    say([["TALLY","One click. Noted. From now on I count everything."],["HOST","Welcome! There's nothing here. Make yourself at home."],
+         ["GRAND","Give us a minute. We're about to become the most important thing on your screen."],["TALLY","We're the only thing on the page."],["GRAND","Exactly."]],"you pressed Listen",5);
   }
   timeThought();
   var gb=navigator.getBattery?navigator.getBattery():null;
@@ -541,6 +578,10 @@ $("go").onclick=function(){
     while(milestones.length && el>=milestones[0][0]){ var m=milestones.shift(); if(el-m[0]<20000 && !paused) m[1](); }
   },1000);
 };
+addEventListener("pagehide",function(){
+  if(!started) return;
+  store("ybht_last",JSON.stringify({ms:Date.now()-t0,woke:Object.keys(heard).length,x:!!heard.XBTN}));
+});
 drawRoster();
 $("rc").onchange=function(){document.body.classList.toggle("norcpt",!this.checked)};
 })();
