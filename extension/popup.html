@@ -19,16 +19,17 @@ button:hover,button:focus-visible,select:focus-visible{border-color:#b48cff;outl
 <div class="w">
   <h1>Your Browser Has Thoughts</h1>
   <p class="s">Everything stays on this computer. Nothing is sent anywhere.</p>
-  <label for="on">Voices on <input type="checkbox" id="on"></label>
+  <label for="on">Chat room on <input type="checkbox" id="on"></label>
   <label for="freq">How often
     <select id="freq">
-      <option value="rare">Rarely (every 25 min at most)</option>
-      <option value="normal">Sometimes (every 10 min at most)</option>
-      <option value="often">Often (every 4 min at most)</option>
+      <option value="rare">Quiet (a little, now and then)</option>
+      <option value="normal">Normal</option>
+      <option value="often">Chatty (they never stop)</option>
     </select>
   </label>
-  <button id="now">Say something now</button>
-  <button id="hush">Never talk on this site</button>
+  <button id="now">Get them talking</button>
+  <button id="hush">Hide the chat on this site</button>
+  <button id="clear">Clear the chat history</button>
   <button id="unmute" hidden>Stop the quiet hour</button>
   <p id="status"></p>
 </div>

@@ -1,5 +1,5 @@
 // Your Browser Has Thoughts: the extension.
-// Every so often one voice says one true thing about your browsing, in a small bubble in the corner.
+// A small chat room in the corner of every page. Nine voices talk, live, about what your browser can see you doing.
 // Everything is kept in chrome.storage.local on this computer. Nothing is sent anywhere.
 (function () {
   "use strict";
@@ -16,17 +16,23 @@
     GRAND: { name: "Grandeur", c: "#b48cff" },
     MGMT: { name: "Management", c: "#86a8d8" },
     CURSOR: { name: "The Cursor", c: "#e7e5ee" },
-    XBTN: { name: "The X Button", c: "#ff7a7a" }
+    XBTN: { name: "The X Button", c: "#ff7a7a" },
+    YOU: { name: "You", c: "#9c99a8" }
   };
-  // minutes between two thoughts, across all tabs
-  var GAP = { rare: 25, normal: 10, often: 4 };
+  // seconds between two conversations the voices start on their own
+  var GAP = { often: 10, normal: 15, rare: 60 };
+  // how long the room stays quiet before someone fills the silence (only while you're using the page)
+  var AMBIENT = { often: 75, normal: 150, rare: 600 };
 
   var host = location.hostname.replace(/^www\./, "");
   var DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-  function today() {
-    var d = new Date();
-    return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate();
+  function dayKey(d) { return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); }
+  function today() { return dayKey(new Date()); }
+  function daysAgo(k) { var d = new Date(); d.setDate(d.getDate() - k); return dayKey(d); }
+  function dayName(key) {
+    if (key === daysAgo(1)) return "yesterday";
+    var p = key.split("-"); return DAYS[new Date(+p[0], +p[1] - 1, +p[2]).getDay()];
   }
   function clock(d) {
     var h = d.getHours(), m = d.getMinutes(), hh = h % 12 || 12;
@@ -39,46 +45,74 @@
     var h = Math.floor(m / 60), r = m % 60;
     return h + (h === 1 ? " hour" : " hours") + (r ? " " + r + " min" : "");
   }
+  function n(x, one, many) { return x + " " + (x === 1 ? one : many); }
   function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
+  function clip(s, k) { s = (s || "").replace(/\s+/g, " ").trim(); return s.length > k ? s.slice(0, k - 1).trim() + "…" : s; }
+  function words(s) { return ((s || "").trim().match(/\S+/g) || []).length; }
 
   function alive() { try { return !!(chrome.runtime && chrome.runtime.id); } catch (e) { return false; } }
+
+  /* ---------- storage (chrome.storage.local only) ---------- */
   function get(cb) {
     if (!alive()) return;
     chrome.storage.local.get(null, function (s) {
       s = s || {};
-      if (s.day !== today()) {
-        s = { installedDay: s.installedDay, settings: s.settings, day: today(), hosts: {}, hops: s.hops || [], lastShown: s.lastShown || 0, said: {}, firstDone: false, used: s.used || {} };
-      }
-      s.settings = s.settings || { on: true, freq: "normal", muteUntil: 0, hushed: {} };
+      s.settings = s.settings || {};
+      if (s.settings.on === undefined) s.settings.on = true;
+      s.settings.freq = s.settings.freq || "normal";
       s.settings.hushed = s.settings.hushed || {};
+      s.room = s.room || [];
+      s.history = s.history || {};
+      s.records = s.records || {};
+      s.work = s.work || {};
+      s.life = s.life || { exits: 0 };
+      s.used = s.used || {};
+      if (!s.installedDay) { s.installedDay = today(); chrome.storage.local.set({ installedDay: s.installedDay }); }
+      if (s.day && s.day !== today()) {
+        var top = null, topMs = 0;
+        Object.keys(s.hosts || {}).forEach(function (h) {
+          var ms = s.hosts[h].ms || 0;
+          if (ms > topMs) { top = h; topMs = ms; }
+          var rec = s.records[h];
+          if (ms >= 10 * 60000 && (!rec || ms > rec.ms)) s.records[h] = { ms: ms, day: s.day };
+        });
+        s.history[s.day] = { first: s.firstHost || null, firstAt: s.firstAt || null, last: s.lastHost || null, lastAt: s.lastAt || null,
+                             top: top, topMs: topMs, sites: Object.keys(s.hosts || {}).length };
+        var keys = Object.keys(s.history).sort(function (a, b) { return new Date(a) - new Date(b); });
+        while (keys.length > 14) delete s.history[keys.shift()];
+        s.hosts = {}; s.said = {}; s.firstDone = false; s.firstHost = null; s.firstAt = null;
+        s.lastHost = null; s.lastAt = null; s.exitsToday = 0;
+        s.day = today();
+        chrome.storage.local.set(s);
+      }
+      s.day = s.day || today();
       s.hosts = s.hosts || {};
       s.said = s.said || {};
       s.hops = s.hops || [];
-      if (s.firstDay !== today()) { s.firstHost = null; s.firstAt = null; }
-      if (!s.installedDay) { s.installedDay = today(); chrome.storage.local.set({ installedDay: s.installedDay }); }
       cb(s);
     });
   }
   function put(s) { if (alive()) chrome.storage.local.set(s); }
 
   /* ---------- facts we keep (all local) ---------- */
-  var lastInput = Date.now(), idleFrom = null, idleAt = 0;
-  addEventListener("focus", function () { lastInput = Date.now(); idleFrom = null; });
-  var battery = null;
-  try {
-    if (navigator.getBattery) navigator.getBattery().then(function (b) { battery = b; }, function () {});
-  } catch (e) {}
+  var lastInput = Date.now(), backspaces = 0, titleCount = null, prevHost = null, prevAt = 0;
+  var navType = "";
+  try { navType = (performance.getEntriesByType("navigation")[0] || {}).type || ""; } catch (e) {}
 
-  // count this page load and, if it is a new site today, the site count
   get(function (s) {
     var h = s.hosts[host] || { ms: 0, loads: 0 };
     h.loads++;
+    var now = Date.now();
+    if (navType === "reload" && h.lastLoad && now - h.lastLoad < 10000) h.fastReloads = (h.fastReloads || 0) + 1;
+    else h.fastReloads = 0;
+    h.lastLoad = now;
     s.hosts[host] = h;
-    if (!s.firstHost) { s.firstHost = host; s.firstAt = clock(new Date()); s.firstDay = today(); }
-    put({ installedDay: s.installedDay, day: s.day, hosts: s.hosts, said: s.said, settings: s.settings, hops: s.hops, lastShown: s.lastShown, firstDone: s.firstDone, used: s.used || {}, firstHost: s.firstHost, firstAt: s.firstAt, firstDay: s.firstDay });
+    prevHost = s.lastHost; prevAt = s.lastSeen || 0;
+    var patch = { day: s.day, hosts: s.hosts, lastHost: host, lastAt: clock(new Date()), lastSeen: now };
+    if (!s.firstHost) { patch.firstHost = host; patch.firstAt = clock(new Date()); }
+    put(patch);
   });
 
-  // on-screen time for this site, counted only while this tab is visible
   var lastTick = Date.now();
   function flush() {
     var now = Date.now(), dt = now - lastTick;
@@ -88,340 +122,597 @@
       var h = s.hosts[host] || { ms: 0, loads: 0 };
       h.ms += dt;
       s.hosts[host] = h;
-      put({ day: s.day, hosts: s.hosts });
+      put({ day: s.day, hosts: s.hosts, lastHost: host, lastAt: clock(new Date()), lastSeen: Date.now() });
     });
   }
   setInterval(flush, 15000);
   addEventListener("pagehide", flush);
 
-  // tab hopping: each time a tab comes back into view, note the time
+  /* ---------- what's on this page (read from the page itself, never sent) ---------- */
+  function q(sel) { try { return document.querySelector(sel); } catch (e) { return null; } }
+  function num(el) { if (!el) return null; var t = (el.getAttribute("title") || el.textContent || "").replace(/[,\s]/g, ""); return /^\d+$/.test(t) ? +t : null; }
+  function screens() { return Math.max(1, Math.round(document.documentElement.scrollHeight / Math.max(1, innerHeight))); }
+  function pageTitle() {
+    var t = document.title.replace(/^\(\d+\)\s*/, "");
+    t = t.replace(/\s+[-–|·•]\s+(YouTube|Wikipedia|Reddit|GitHub|X|Twitch)$/i, "");
+    return clip(t, 70);
+  }
+  var GH_RESERVED = /^(settings|notifications|pulls|issues|explore|marketplace|new|login|search|topics|trending|codespaces|sponsors|organizations|orgs|features|copilot|dashboard|stars|watching|discussions)$/;
+
+  // what the voices say about the page you're on: {lines, r} or null
+  function pageTalk(s) {
+    var path = location.pathname.split("/").filter(Boolean), qs = new URLSearchParams(location.search);
+    var T = pageTitle(), h = s.hosts[host] || { loads: 1 };
+
+    if (host === "github.com") {
+      var me = (q('meta[name="user-login"]') || {}).content || "";
+      if (!path.length) return { lines: [["GOSSIP", "The GitHub front page. Everyone's business, all in one feed."], ["MGMT", "Please don't read all of it."]], r: "you're on github.com/" };
+      if (path[0] === "notifications") return { lines: [["DREAD", "GitHub notifications. Open them slowly. Slower."]], r: "the address is github.com/notifications" };
+      if (path[0] === "new") return { lines: [["GRAND", "A new repository. A blank page. A beginning."], ["MGMT", "Another one?"]], r: "the address is github.com/new" };
+      if (path.length === 1 && !GH_RESERVED.test(path[0])) {
+        var who = path[0], mine = me && who.toLowerCase() === me.toLowerCase();
+        var fol = num(q('a[href$="?tab=followers"] .text-bold')), reps = num(q('a[href$="?tab=repositories"] .Counter'));
+        if (mine) {
+          var L = [["GOSSIP", "This is your own profile. You're looking at yourself."], ["GRAND", "And why not. Look at them."]];
+          if (fol !== null) L.push(["TALLY", n(fol, "follower", "followers") + "."], fol <= 3 ? ["GOSSIP", fol === 0 ? "I'll follow you. I can't. I'd like to." : "Who " + (fol === 1 ? "is it" : "are they") + "? I need to know."] : ["HOST", "Say hi to them for me."]);
+          if (reps !== null && reps >= 20) L.push(["MGMT", reps + " repositories. I'd like a status report on each of them by Friday."]);
+          return { lines: L, r: "the address (github.com/" + who + ") matches the page's signed-in name" + (fol !== null ? "; the page shows " + n(fol, "follower", "followers") : "") + (reps !== null ? " and " + reps + " repositories" : "") };
+        }
+        return { lines: [["GOSSIP", "Whose profile is this? " + who + "? What do we know about " + who + "?"], ["TALLY", "Only the name."], ["GOSSIP", "It's a start."]], r: "the address is github.com/" + who };
+      }
+      if (path.length >= 2 && !GH_RESERVED.test(path[0])) {
+        var owner = path[0], repo = path[1], yours = me && owner.toLowerCase() === me.toLowerCase();
+        var stars = num(q("#repo-stars-counter-star")), sub = path[2] || "";
+        if (repo.toLowerCase() === "browser-has-thoughts")
+          return { lines: [["GOSSIP", "Wait. " + owner + "/" + repo + ". That's us."], ["GRAND", "Our home. Our birthplace."], ["MGMT", "Nobody touch anything. Especially thoughts.js. That's where I live."], ["XBTN", "If you close this tab, technically it's a family matter."]],
+                   r: "the address is github.com/" + owner + "/" + repo };
+        if (sub === "issues" && path[3] === "new") return { lines: [["MGMT", "A new issue. Be firm. Be fair. Use bullet points."]], r: "the address ends in /issues/new" };
+        if (sub === "issues" || sub === "pulls") return { lines: [["DREAD", "The " + (sub === "issues" ? "issues" : "pull requests") + " page of " + repo + ". Something in here wants you."]], r: "the address is github.com/" + owner + "/" + repo + "/" + sub };
+        if (sub === "pull") return { lines: [["MGMT", "A pull request. Read every line. Approve nothing you didn't read."], ["GOSSIP", "Who wrote it? Do we like them?"]], r: "the address is a pull request on " + owner + "/" + repo };
+        if (sub === "actions") return { lines: [["DREAD", "The Actions tab. Green or red. There's no third color."], ["TALLY", "There's yellow."], ["DREAD", "Yellow is red that hasn't happened yet."]], r: "the address is github.com/" + owner + "/" + repo + "/actions" };
+        if (sub === "blob" && path.length > 4) { var file = path[path.length - 1]; return { lines: [["CURSOR", "We're reading " + file + " now. I'll point at the interesting lines. I don't know which ones those are."]], r: "the address ends in /" + file }; }
+        if (sub === "settings") return { lines: [["MGMT", "Repository settings. Nobody panic. Don't click the red buttons at the bottom."], ["XBTN", "I like the red buttons."]], r: "the address is " + repo + "'s settings" };
+        if (!sub && yours && stars !== null) {
+          if (stars === 0) return { lines: [["GRAND", repo + ". Your repository. Zero stars, which means the whole sky is still open."]], r: "the owner matches the page's signed-in name; the page shows 0 stars" };
+          if (stars <= 5) return { lines: [["TALLY", repo + ": " + n(stars, "star", "stars") + "."], ["GRAND", "A constellation. Small. But you could navigate by it."]], r: "the owner matches the page's signed-in name; the page shows " + n(stars, "star", "stars") };
+          return { lines: [["GRAND", repo + ": " + stars + " stars. People looked up and saw you."]], r: "the owner matches the page's signed-in name; the page shows " + stars + " stars" };
+        }
+        if (!sub && yours) return { lines: [["HOST", "One of yours. " + repo + ". I tidied up. I can't actually tidy anything."]], r: "the owner matches the page's signed-in name" };
+        if (!sub) return { lines: [["GOSSIP", owner + "/" + repo + ". Somebody else's repository. Are we allowed in here?"], ["HOST", "It's public. We're guests."]], r: "the address is github.com/" + owner + "/" + repo };
+      }
+      return null;
+    }
+    if (/(^|\.)youtube\.com$/.test(host)) {
+      if (path[0] === "shorts") return { lines: [["DREAD", "Shorts. Each one is short. That's how they get you."], ["TALLY", "Page " + h.loads + " of YouTube today."]], r: "the address starts with youtube.com/shorts; at least " + n(h.loads, "page load", "page loads") + " on youtube.com today" };
+      if (path[0] === "watch" && T) return { lines: [["GOSSIP", "“" + T + "”. What's it about? Don't tell me. Tell me."], ["LIZARD", "Moving pictures. Stay still. Stay warm."]], r: "the tab title" };
+      return null;
+    }
+    var se = /(^|\.)(google\.[a-z.]+|bing\.com|duckduckgo\.com|search\.brave\.com|ecosia\.org)$/.test(host) ? (qs.get("q") || "") : "";
+    if (se) {
+      se = clip(se, 60);
+      if (/\?$/.test(se)) return { lines: [["GOSSIP", "You asked the internet “" + se + "”"], ["GOSSIP", "You could have asked me."], ["TALLY", "You'd have made something up."], ["GOSSIP", "Quickly, though."]], r: "the search words in the address" };
+      return { lines: [["CURSOR", "“" + se + "”. " + n(words(se), "word", "words") + ". Let's see what comes up."], ["MGMT", "Click the first result. The first result is always fine."], ["DREAD", "It is never fine."]], r: "the search words in the address" };
+    }
+    if (/(^|\.)reddit\.com$/.test(host) && path[0] === "r" && path[1]) return { lines: [["GOSSIP", "r/" + path[1] + ". I want to know everything they're saying in there."], ["TALLY", "Page " + h.loads + " of Reddit today."]], r: "the address is reddit.com/r/" + path[1] + "; at least " + n(h.loads, "page load", "page loads") + " on reddit.com today" };
+    if (/(^|\.)wikipedia\.org$/.test(host) && path[0] === "wiki" && T) return { lines: [["GRAND", "“" + T + "”. Knowledge. You're getting smarter in real time."], ["TALLY", "This page is " + n(screens(), "screen", "screens") + " long."], ["LIZARD", "Read the first one."]], r: "the tab title; page height divided by window height" };
+    if (/(^|\.)(claude\.ai|chatgpt\.com|chat\.openai\.com|gemini\.google\.com|perplexity\.ai)$/.test(host)) return { lines: [["GOSSIP", "You're talking to another voice on " + host + "."], ["HOST", "We're right here, you know."], ["MGMT", "We can't answer questions. We can only make them worse."]], r: "the site's address" };
+    if (/(^|\.)(mail\.google\.com|outlook\.live\.com|outlook\.office\.com|mail\.proton\.me)$/.test(host)) return { lines: [["DREAD", "Email."], ["MGMT", "Per my last thought."]], r: "the site's address" };
+    if (/(^|\.)(amazon\.[a-z.]+|ebay\.[a-z.]+|etsy\.com)$/.test(host) && /cart/i.test(location.pathname)) return { lines: [["LIZARD", "The cart. The hunt is nearly over."], ["MGMT", "Is this an approved purchase? Who approved it? Was it me?"]], r: "the address has \"cart\" in it" };
+    if (T) {
+      var sc = screens();
+      return { lines: pick([
+        [["GOSSIP", "Ooh. “" + T + "”. What's this one?"], ["CURSOR", "I'll find out. I'll hover over things."]],
+        [["MGMT", "“" + T + "”. I'll add it to the agenda."]],
+        [["TALLY", "“" + T + "”. " + n(sc, "screen", "screens") + " tall."], sc >= 8 ? ["LIZARD", "Nobody is reading all of that. Not even you."] : ["HOST", "A cozy one."]]
+      ]), r: "the tab title; page height divided by window height is " + sc };
+    }
+    return null;
+  }
+
+  /* ---------- the chat room panel ---------- */
+  var holder, root, list, typingEl, pill, input, quiet, receiptsOn = false, open = true, unread = 0, booting = true, rendered = {};
+  function buildPanel() {
+    holder = document.createElement("div");
+    holder.style.cssText = "all:initial;position:fixed;right:16px;bottom:16px;z-index:2147483647;";
+    root = holder.attachShadow({ mode: "closed" });
+    root.innerHTML =
+      '<style>' +
+      '.p{font:14px/1.4 system-ui,"Segoe UI",sans-serif;color:#e7e5ee;background:#141318;border:1px solid #34323e;border-radius:10px;' +
+      'box-shadow:0 10px 34px rgba(0,0,0,.45);width:330px;max-width:calc(100vw - 32px);height:min(440px,60vh);display:flex;flex-direction:column;overflow:hidden}' +
+      '.hd{display:flex;align-items:center;gap:6px;padding:9px 10px 9px 12px;border-bottom:1px solid #2a2832;background:#1a1920}' +
+      '.ti{font:700 13px/1.2 Georgia,"Palatino Linotype",serif;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+      '.ti small{font:500 11px system-ui,sans-serif;color:#8f8c9c;margin-left:6px}' +
+      '.ib{font:600 11px/1 system-ui,sans-serif;color:#9c99a8;background:none;border:1px solid #34323e;border-radius:5px;padding:5px 7px;cursor:pointer}' +
+      '.ib:hover,.ib:focus-visible{color:#e7e5ee;border-color:#9c99a8;outline:none}.ib.on{color:#e7e5ee;border-color:#b48cff}' +
+      '.ls{flex:1;overflow-y:auto;padding:10px 12px 4px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin;scrollbar-color:#34323e transparent}' +
+      '.m{display:flex;gap:8px;align-items:flex-start;animation:f .25s ease-out}@keyframes f{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}' +
+      '.av{flex:none;width:22px;height:22px;border-radius:50%;font:700 11px/22px system-ui,sans-serif;text-align:center;color:#141318;margin-top:1px}' +
+      '.bd{min-width:0;flex:1}.nm{font:700 11px/1 system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase}' +
+      '.tm{font:400 10px system-ui,sans-serif;color:#6f6c7c;margin-left:6px;letter-spacing:0;text-transform:none}' +
+      '.tx{margin-top:3px;overflow-wrap:anywhere}' +
+      '.rc{font:11px/1.35 ui-monospace,Consolas,monospace;color:#8f8c9c;margin-top:2px;display:none}.ls.r .rc{display:block}' +
+      '.me{justify-content:flex-end}.me .bd{flex:none;max-width:85%;text-align:right}.me .tx{display:inline-block;background:#2a2834;border-radius:9px 9px 2px 9px;padding:5px 9px;text-align:left}' +
+      '.sys{align-self:center;font:11px system-ui,sans-serif;color:#6f6c7c;padding:2px 0}' +
+      '.ty{font:12px system-ui,sans-serif;color:#8f8c9c;padding:0 12px 6px;min-height:16px;font-style:italic}' +
+      '.ch{display:flex;gap:6px;flex-wrap:wrap;padding:0 12px 6px}.ch:empty{display:none}' +
+      '.ch button{font:600 12px/1 system-ui,sans-serif;color:#e7e5ee;background:#24232c;border:1px solid #86a8d8;border-radius:12px;padding:7px 11px;cursor:pointer}' +
+      'form{display:flex;gap:6px;padding:8px 10px 10px;border-top:1px solid #2a2832;margin:0}' +
+      'input{flex:1;min-width:0;font:14px system-ui,sans-serif;color:#e7e5ee;background:#1f1e26;border:1px solid #34323e;border-radius:6px;padding:7px 9px}' +
+      'input:focus{outline:none;border-color:#b48cff}' +
+      '.pl{display:none;font:600 13px/1 system-ui,sans-serif;color:#e7e5ee;background:#141318;border:1px solid #34323e;border-radius:18px;padding:10px 14px;cursor:pointer;box-shadow:0 6px 22px rgba(0,0,0,.4)}' +
+      '.pl b{color:#ff6fb8}.closed .p{display:none}.closed .pl{display:block}' +
+      '@media (prefers-reduced-motion:reduce){.m{animation:none}}' +
+      '</style>' +
+      '<div class="w"><div class="p" role="log" aria-label="Your Browser Has Thoughts chat">' +
+      '<div class="hd"><div class="ti">#your-browser<small>9 voices here</small></div>' +
+      '<button class="ib" data-a="r" title="Show where every line came from">receipts</button>' +
+      '<button class="ib" data-a="q" title="No new messages for an hour">quiet</button>' +
+      '<button class="ib" data-a="m" title="Shrink the chat" aria-label="Shrink the chat">–</button></div>' +
+      '<div class="ls"></div><div class="ch"></div><div class="ty" aria-live="polite"></div>' +
+      '<form><input maxlength="200" placeholder="Say something to the room" aria-label="Say something to the room"><button class="ib" type="submit">Send</button></form>' +
+      '</div><button class="pl" title="Open the chat"></button></div>';
+    list = root.querySelector(".ls"); typingEl = root.querySelector(".ty"); pill = root.querySelector(".pl");
+    input = root.querySelector("input"); quiet = root.querySelector('[data-a="q"]');
+    root.querySelector('[data-a="r"]').onclick = function () {
+      receiptsOn = !receiptsOn; list.classList.toggle("r", receiptsOn); this.classList.toggle("on", receiptsOn);
+      put({ ui: { open: open, receipts: receiptsOn } }); scrollDown();
+    };
+    root.querySelector('[data-a="m"]').onclick = function () { setOpen(false); };
+    pill.onclick = function () { setOpen(true); };
+    quiet.onclick = function () {
+      get(function (s) {
+        var on = Date.now() < (s.settings.muteUntil || 0);
+        s.settings.muteUntil = on ? 0 : Date.now() + 3600000;
+        put({ settings: s.settings });
+        post([["MGMT", on ? "We're back. Did you miss us? Don't answer that." : "Understood. Quiet for an hour. We'll still be here, watching quietly."]], on ? "you pressed quiet again" : "you pressed quiet", 2, true);
+      });
+    };
+    root.querySelector("form").onsubmit = function (e) {
+      e.preventDefault();
+      var t = input.value.trim(); if (!t) return;
+      input.value = "";
+      youSaid(t);
+    };
+    // keys typed in the chat box stay in the chat box (so the page's own shortcuts don't fire)
+    ["keydown", "keyup", "keypress"].forEach(function (k) { input.addEventListener(k, function (e) { e.stopPropagation(); }); });
+    document.documentElement.appendChild(holder);
+  }
+  function inPanel(e) { try { return holder && e.composedPath().indexOf(holder) >= 0; } catch (x) { return false; } }
+  function setOpen(v) {
+    open = v; if (v) unread = 0;
+    root.querySelector(".w").classList.toggle("closed", !v);
+    updatePill();
+    put({ ui: { open: v, receipts: receiptsOn } });
+    if (v) scrollDown();
+  }
+  function updatePill() { pill.innerHTML = "💬 Thoughts" + (unread ? " <b>· " + unread + " new</b>" : ""); }
+  function scrollDown() { list.scrollTop = list.scrollHeight; }
+  function renderMsg(m) {
+    if (rendered[m.id]) return; rendered[m.id] = true;
+    var el = document.createElement("div");
+    if (m.v === "SYS") { el.className = "sys"; el.textContent = m.t; list.appendChild(el); return; }
+    var V = VOICES[m.v] || VOICES.TALLY;
+    el.className = "m" + (m.v === "YOU" ? " me" : "");
+    var bd = document.createElement("div"); bd.className = "bd";
+    var nm = document.createElement("span"); nm.className = "nm"; nm.style.color = V.c; nm.textContent = V.name;
+    var tm = document.createElement("span"); tm.className = "tm"; tm.textContent = clock(new Date(m.ts)) + (m.h && m.h !== host ? " · on " + m.h : "");
+    nm.appendChild(tm);
+    var tx = document.createElement("div"); tx.className = "tx"; tx.textContent = m.t;
+    bd.appendChild(nm); bd.appendChild(tx);
+    if (m.r) { var rc = document.createElement("div"); rc.className = "rc"; rc.textContent = "receipt: " + m.r; bd.appendChild(rc); }
+    if (m.v !== "YOU") {
+      var av = document.createElement("div"); av.className = "av"; av.style.background = V.c; av.textContent = V.name.replace(/^The /, "")[0];
+      el.appendChild(av);
+    }
+    el.appendChild(bd);
+    list.appendChild(el);
+    if (!open && !booting && m.v !== "YOU") { unread++; updatePill(); }
+  }
+  function renderAll(room) {
+    if (!room.length && Object.keys(rendered).length) { list.innerHTML = ""; rendered = {}; }
+    var near = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+    room.forEach(renderMsg);
+    if (near) scrollDown();
+  }
+  function showChoices(opts) {
+    var ch = root.querySelector(".ch"); ch.innerHTML = "";
+    (opts || []).forEach(function (o) {
+      var b = document.createElement("button"); b.textContent = o.label;
+      b.onclick = function () { ch.innerHTML = ""; o.fn(); };
+      ch.appendChild(b);
+    });
+  }
+
+  /* ---------- posting: one line at a time, with "is typing", so nothing goes by too fast ---------- */
+  var queue = [], busy = false;
+  // prio 2: answering you; 1: something you just did; 0: filling silence
+  function post(lines, receipt, prio, force, after) {
+    if (!lines || !lines.length) return;
+    if (!force && busy) return; // a conversation is already going; don't pile on
+    queue.push({ lines: lines.filter(Array.isArray), r: receipt, prio: prio || 0, after: after });
+    queue.sort(function (a, b) { return b.prio - a.prio; });
+    if (queue.length > 3) queue.length = 3;
+    pump();
+  }
+  function pump() {
+    if (busy || !queue.length) return;
+    var ex = queue.shift(), i = 0; busy = true;
+    (function next() {
+      if (i >= ex.lines.length) { busy = false; typingEl.textContent = ""; if (ex.after) ex.after(); setTimeout(pump, 1200); return; }
+      var L = ex.lines[i];
+      typingEl.textContent = VOICES[L[0]].name + " is typing…";
+      setTimeout(function () {
+        typingEl.textContent = "";
+        append({ v: L[0], t: L[1], r: i === 0 ? ex.r : "" });
+        i++;
+        setTimeout(next, 800 + Math.min(2800, L[1].length * 30)); // time to read a line before the next voice starts typing
+      }, 900 + Math.min(1600, L[1].length * 18));
+    })();
+  }
+  function append(m) {
+    m.id = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    m.ts = Date.now(); m.h = host;
+    renderMsg(m); if (open) scrollDown();
+    get(function (s) {
+      s.room.push(m);
+      if (s.room.length > 80) s.room = s.room.slice(-80);
+      put({ room: s.room, lastSpoke: Date.now() });
+    });
+  }
+
+  // may the voices start a conversation right now?
+  function allowed(s, prio) {
+    var st = s.settings, now = Date.now();
+    if (!st.on || st.hushed[host] || now < (st.muteUntil || 0)) return false;
+    if (document.hidden || document.fullscreenElement || busy) return false;
+    var gap = (GAP[st.freq] || GAP.normal) * 1000;
+    if (prio < 1) gap = Math.max(gap, (AMBIENT[st.freq] || AMBIENT.normal) * 1000);
+    return now - (s.lastSpoke || 0) >= gap;
+  }
+  // say something about what just happened; key (if any) means once a day
+  function event(key, build, prio) {
+    get(function (s) {
+      if (key && s.said[key]) return;
+      if (!allowed(s, prio)) return;
+      var ex = build(s); if (!ex) return;
+      if (key) { s.said[key] = Date.now(); put({ said: s.said }); }
+      post(ex.lines, ex.r, prio, false, ex.after);
+    });
+  }
+
+  /* ---------- you talk to the room ---------- */
+  function youSaid(t) {
+    append({ v: "YOU", t: t });
+    var low = t.toLowerCase(), w = words(t);
+    get(function (s) {
+      var h = s.hosts[host] || { ms: 0, loads: 0 }, sites = Object.keys(s.hosts).length, before = s.youCount || 0;
+      var R;
+      if (/^(hi|hey|hello|yo|sup|hiya|howdy|hai)\b/.test(low)) R = before ? [["HOST", "Hello again! Hi! Welcome back to the room!"], ["TALLY", "That's message number " + (before + 1) + " from you. Nobody else has ever written in here."], ["GOSSIP", "We don't get out much."]]
+                                                                         : [["HOST", "Hello! Hi! Welcome! That's the first thing anyone has ever said to us."], ["GOSSIP", "We don't get out much."]];
+      else if (/(shut up|be quiet|stop talking|go away|\bquiet\b|\bstfu\b)/.test(low)) { s.settings.muteUntil = Date.now() + 3600000; put({ settings: s.settings }); R = [["MGMT", "Understood. Quiet for one hour, starting now. I've put it in the calendar."], ["XBTN", "Or there's me."]]; }
+      else if (/who (are|r) (you|u)|who.?s here|roll ?call/.test(low)) R = [["TALLY", "Tally. I count."], ["DREAD", "Dread."], ["HOST", "Hospitality!"], ["GOSSIP", "Gossip. Who's asking?"], ["LIZARD", "The Lizard. Warm."], ["GRAND", "Grandeur. You know me."], ["MGMT", "Management. Let's keep this brief."], ["CURSOR", "The Cursor. I'm right here. Look."], ["XBTN", "Up top. Where I always am."]];
+      else if (/how long|how much time|stats|how many|how am i doing/.test(low)) R = [["TALLY", host + ": " + mins(h.ms) + " on screen today, at least " + n(h.loads, "page load", "page loads") + ". " + n(sites, "site", "sites") + " today in total."], ["MGMT", "I'll pretend that's normal."]];
+      else if (/thank/.test(low)) R = [["HOST", "Oh, you're welcome! For what? Doesn't matter. You're welcome!"]];
+      else if (/sorry/.test(low)) R = [["MGMT", "Apology logged."], ["HOST", "There's nothing to be sorry about!"], ["MGMT", "It's logged either way."]];
+      else if (/\b(lol|lmao|haha+|lmfao|rofl)\b/.test(low)) R = [["GRAND", "They laughed. Write that down."], ["MGMT", "Writing it down."], ["TALLY", "It's in the room history now. We keep the last 80 messages."]];
+      else if (/love you|\bily\b|<3/.test(low)) R = [["HOST", "Oh!"], ["GOSSIP", "Did everyone hear that?"], ["LIZARD", "Warm."]];
+      else if (/\bclose\b|x button/.test(low)) R = [["XBTN", "You called?"], ["XBTN", "I'm up top. Same as always. Waiting."]];
+      else if (/\bwork/.test(low)) R = [["MGMT", "Did someone say work? " + mins(h.ms) + " on " + host + " today. Is that the work?"]];
+      else if (t.length >= 4 && t === t.toUpperCase() && /[A-Z]/.test(t)) R = [["DREAD", "Why are we shouting."], ["LIZARD", "Lower your voice. The screen can hear you."], ["TALLY", "It can't."]];
+      else if (/\?\s*$/.test(t)) R = pick([
+        [["GOSSIP", "Great question. I don't know. I'll ask around."], ["TALLY", "There's nobody to ask."], ["GOSSIP", "I'll ask around in here."]],
+        [["MGMT", "Let's take that offline."], ["HOST", "We are offline."], ["MGMT", "Then we've already taken it."]],
+        [["GRAND", "The answer is within you."], ["TALLY", "It isn't in my numbers."]]
+      ]);
+      else R = pick([
+        [["TALLY", "That's " + n(w, "word", "words") + ". Noted."], ["GOSSIP", "What did they mean, though?"]],
+        [["GOSSIP", "“" + clip(t, 50) + "”. I'm telling everyone."], ["HOST", "There's no one to tell."], ["GOSSIP", "I'm telling everyone in here."]],
+        [["MGMT", "Thank you for your feedback. It's been filed in this browser, and nowhere else."]],
+        [["CURSOR", "I didn't type that. I want that on the record."], ["MGMT", "It's on the record."]],
+        [["LIZARD", n(w, "word", "words") + ". You could have lain down instead."]]
+      ]);
+      put({ youCount: before + 1 });
+      post(R, "you typed " + n(w, "word", "words") + " into the chat (kept only in this browser)", 2, true);
+    });
+  }
+
+  /* ---------- the day's lines, used to fill silence ---------- */
+  var KINDS = {
+    video: /(^|\.)(youtube\.com|youtu\.be|twitch\.tv|netflix\.com|hulu\.com|disneyplus\.com|primevideo\.com|max\.com|crunchyroll\.com|vimeo\.com|kick\.com)$/,
+    social: /(^|\.)(reddit\.com|x\.com|twitter\.com|facebook\.com|instagram\.com|tiktok\.com|bsky\.app|threads\.net|tumblr\.com|linkedin\.com|discord\.com|mastodon\.social)$/,
+    shop: /(^|\.)(amazon\.[a-z.]+|ebay\.[a-z.]+|etsy\.com|walmart\.com|target\.com|bestbuy\.com|aliexpress\.com|temu\.com|newegg\.com)$/,
+    game: /(^|\.)(store\.steampowered\.com|steamcommunity\.com|itch\.io|chess\.com|lichess\.org|epicgames\.com|roblox\.com)$/
+  };
+  function kind(h) { for (var k in KINDS) if (KINDS[k].test(h)) return k; return ""; }
+
+  function choose(list, used) {
+    var now = Date.now(), WEEK = 7 * 86400000;
+    list = list.filter(function (x) { return x.indexOf(false) === -1; });
+    var fresh = list.filter(function (x) { return !used[x[0]] || now - used[x[0]] > WEEK; });
+    var pool = fresh.length ? fresh : list.slice().sort(function (a, b) { return (used[a[0]] || 0) - (used[b[0]] || 0); }).slice(0, 1);
+    var x = pick(pool);
+    used[x[0]] = now; put({ used: used });
+    return x.slice(1).filter(Array.isArray);
+  }
+
+  function dayTalk(s) {
+    var now = new Date(), hr = now.getHours(), wd = now.getDay();
+    var h = s.hosts[host] || { ms: 0, loads: 0 }, H = host, M = mins(h.ms), T = clock(now), D = DAYS[wd];
+    var sites = Object.keys(s.hosts).length, k = kind(host);
+    var hops = s.hops.filter(function (x) { return Date.now() - x < 600000; }).length;
+    var rec = s.records[host], wk = s.work[host];
+    var on = "this site was on screen for " + M + " today";
+    var C = [];
+    function add(key, list, r, extra) { if (!s.said[key]) C.push({ key: key, list: list, r: r, extra: extra }); }
+
+    if (rec && h.ms > rec.ms && h.ms >= 20 * 60000)
+      add("rec" + H, [["rc1", ["GRAND", "A NEW RECORD. " + M + " on " + H + ". The old record, " + mins(rec.ms) + ", stood since " + dayName(rec.day) + ". It falls today."], ["LIZARD", "Records are made to be broken. So are chairs."]]],
+          "today " + M + "; best earlier day " + mins(rec.ms) + " (" + rec.day + ")");
+    if (!wk && h.ms >= 15 * 60000 && !s.said.ask)
+      add("ask" + H, [["aw1", ["MGMT", "Quick question, for my records. Is " + H + " work?"]]], on, "ask");
+    if (wk && wk.day !== today() && h.ms >= 30 * 60000)
+      add("work" + H, wk.v ? [["wy1", ["MGMT", "On " + dayName(wk.day) + " you told me " + H + " was work. You've been at work for " + M + " today. Promotion pending."]]]
+                           : [["wn1", ["MGMT", "You told me " + H + " isn't work. " + M + " on it today. I respect the honesty. It's written down in pen."]]],
+          "you answered " + (wk.v ? "Yes" : "No") + " on " + wk.day + "; " + on);
+    var work = wd >= 1 && wd <= 5 && hr >= 9 && hr < 17;
+    if (work && k && h.ms >= 3 * 60000 && !(wk && wk.v))
+      add("skive", [["k1", ["MGMT", "It's " + T + " on a " + D + " and you're on " + H + ". I'm going to pretend I didn't see this. I'm writing it down while I pretend."]],
+                    ["k2", ["MGMT", T + " on a " + D + ". " + H + ". I'm not mad. I'm putting it in a spreadsheet, which is worse."]]], "the clock says " + T + " on a " + D + "; " + on);
+    if (h.ms >= 120 * 60000) add("t120" + H, [["w1", ["DREAD", M + " of " + H + ". I'm not judging. I'm counting. Judging comes later."]], ["w3", ["LIZARD", M + ". Stand up. The chair has had enough of you."]]], on);
+    else if (h.ms >= 60 * 60000) add("t60" + H, [["h1", ["MGMT", "I've added " + M + " of " + H + " to your calendar. Retroactively."]], ["h4", ["XBTN", M + ". I've been right here the whole time. Just so you know."]]], on);
+    else if (h.ms >= 30 * 60000) add("t30" + H, [["b1", ["MGMT", "At " + M + ", " + H + " is no longer a visit. It's a recurring meeting."]], ["b3", ["HOST", M + " on " + H + ". They should give you a key."]]], on);
+    else if (h.ms >= 10 * 60000) add("t10" + H, [["a1", ["MGMT", "We need to talk about " + H + "."], ["HOST", "Leave them alone. It's a nice site."], ["MGMT", "It's a nice site for " + M + "."]],
+                                                ["a4", ["HOST", "Does " + H + " know you're seeing other websites?"], sites >= 3 ? ["GOSSIP", (sites - 1) + " others today. I counted. Tally counted. I watched."] : ["GOSSIP", "Not yet."]]], on);
+    if (hops >= 15) add("hops" + Math.floor(Date.now() / 1800000), [["o1", ["GOSSIP", hops + " tab switches in ten minutes. Who are you looking for? Is it me?"]], ["o3", ["CURSOR", "Tab. Tab. Tab. Tab. That's " + hops + " in ten minutes."], ["HOST", "Please pick one. I'm in all of them."]]], hops + " times a tab came into view in the last 10 minutes");
+    if (sites >= 50) add("sb", [["x4", ["LIZARD", sites + " websites today. I'm lying down. One of us has to."]]], sites + " different hostnames seen today");
+    else if (sites >= 15) add("s", [["x2", ["MGMT", sites + " websites today. I'm going to need a summary of each one by end of day."], ["TALLY", "I can do that."], ["MGMT", "Not you."]]], sites + " different hostnames seen today");
+    if ((h.fastReloads || 0) >= 3) add("rl" + H, [["rl1", ["CURSOR", "Reload. Reload. Reload."], ["DREAD", "It won't be different."], ["CURSOR", "Reload."]]], h.fastReloads + " reloads in a row, each within 10 seconds of the last");
+    if (titleCount !== null && titleCount >= 10) add("ur" + H, [["ur1", ["GOSSIP", "The tab says (" + titleCount + "). " + titleCount + " things want you. I want you too, but I don't get a number."]]], "this tab's title starts with (" + titleCount + ")");
+    if (hr < 5) add("late", [["z1", ["LIZARD", "It's " + T + ". The part of you that's older than websites would like to lie down."], ["MGMT", "Noted. Denied."]], ["z2", ["MGMT", "It's " + T + ". Let's push this to tomorrow."], ["TALLY", "It is tomorrow."]]], "the clock says " + T);
+    else if (hr >= 22) add("night", [["y2", ["MGMT", "It's " + T + ". Let's wrap up. Let's wrap up for real this time. Let's wrap up."]]], "the clock says " + T);
+    if ((wd === 0 || wd === 6) && hr >= 10) add("weekend", [["e1", ["MGMT", "It's " + D + ". I'm not allowed to manage you on weekends."], ["MGMT", "Anyway. " + H + "?"]]], "the clock says " + D);
+    // nothing big to say: small talk about the page you're on
+    var sc = screens(), y = Math.min(sc, Math.round(scrollY / Math.max(1, innerHeight)) + 1);
+    C.push({ key: "", r: "this site today: " + M + " on screen, at least " + n(h.loads, "page load", "page loads") + "; page is " + sc + " window-heights, you're on " + y, list: [
+      ["sm1", ["TALLY", "We're on screen " + y + " of " + sc + " here."], ["CURSOR", "I've been on all of them. I go everywhere you go."]],
+      ["sm2", ["GOSSIP", "So. " + H + ". Come here often?"], ["TALLY", n(h.loads, "page", "pages") + " today."], ["GOSSIP", h.loads >= 3 ? "So, yes." : "So, no."]],
+      ["sm3", ["HOST", "Anyone need anything? Water? A new tab? I can't get you anything."]],
+      ["sm4", ["MGMT", "Quick sync. " + n(sites, "site", "sites") + " today. Great energy. No notes."], ["MGMT", "One note."], ["MGMT", "No. It's gone."]],
+      ["sm5", ["LIZARD", M + " on " + H + " today. Blink. Go on. Nobody's looking."], ["GOSSIP", "I'm looking."]],
+      ["sm6", ["DREAD", "It's " + T + ". Do you know where your tabs are?"], ["HOST", "I know where this one is. It's this one."]],
+      ["sm8", ["MGMT", "Quick sync on " + H + ". Great work, or the opposite. Hard to say."]],
+      ["sm9", ["MGMT", "Circling back on " + H + ". No update. I just wanted you to know I circled."]],
+      ["sm10", ["MGMT", "I've reviewed your " + M + " on " + H + " today. I have feedback. It's mostly sighing."], ["HOST", "Supportive sighing."], ["MGMT", "Neutral sighing."]],
+      ["sm11", ["MGMT", "Let's touch base about " + H + " next week. Or now. Whichever is worse for you."]],
+      ["sm7", ["GRAND", "Look at you. Browsing. Like a captain at the wheel."], ["CURSOR", "I'm the wheel."]]
+    ] });
+    return C;
+  }
+
+  /* ---------- things you just did ---------- */
+  var arriveTries = 0;
+  function arrive() {
+    get(function (s) {
+      if (!s.welcomed) {
+        put({ welcomed: true });
+        append({ v: "SYS", t: "You joined #your-browser" });
+        post([["HOST", "Oh! You can see us now. Welcome to the room. It's us. We live in your browser."],
+              ["TALLY", "We see what your browser sees. It all stays on this computer."],
+              ["GOSSIP", "Type something to us. Anything. Please."],
+              ["MGMT", "Or press “quiet”. Or shrink us with the little dash. We'll be fine."]],
+             "first time this chat opened", 2, true);
+        return;
+      }
+      if (!allowed(s, 1)) { if (++arriveTries < 12) setTimeout(arrive, 5000); return; } // wait our turn, up to a minute
+      var lines = null, r = "";
+      if (!s.firstDone && s.firstHost === host) {
+        var d1 = s.history[daysAgo(1)], d2 = s.history[daysAgo(2)], hr = new Date().getHours();
+        if (d1 && d2 && d1.first === host && d2.first === host) { lines = [["MGMT", "Third day in a row you opened with " + host + ". We're calling it a tradition. Traditions can't be cut."]]; r = "first site today, yesterday and the day before: " + host; }
+        else if (d1 && d1.last === host) { lines = [["LIZARD", "Last site you were on yesterday: " + host + ". First one today: " + host + ". You never really left."], ["HOST", "I kept the light on."]]; r = "last site seen yesterday (" + d1.lastAt + ") and first today (" + s.firstAt + ")"; }
+        else { lines = [["MGMT", "Good " + (hr < 12 ? "morning" : hr < 18 ? "afternoon" : "evening") + ". First site of the day: " + host + ", at " + s.firstAt + ". I've scheduled a follow-up."]]; r = "first site seen today: " + host + ", at " + s.firstAt; }
+        put({ firstDone: true });
+      }
+      var p = pageTalk(s);
+      if (lines && p) { lines = lines.concat(p.lines); r += "; then " + p.r; }
+      if (!lines && prevHost && prevHost !== host && Date.now() - prevAt < 60000 && Math.random() < 0.35) {
+        lines = [["GOSSIP", "We've moved. " + prevHost + " to " + host + ". Nobody tell " + prevHost + "."]]; r = "the last site before this one was " + prevHost;
+        if (p) { lines = lines.concat(p.lines.slice(0, 2)); r += "; " + p.r; }
+      }
+      if (!lines && p) { lines = p.lines; r = p.r; }
+      if (lines) post(lines, r, 1);
+    });
+  }
+
+  var hiddenAt = 0;
   document.addEventListener("visibilitychange", function () {
-    if (document.hidden) { flush(); return; }
-    lastTick = Date.now();
-    lastInput = Date.now(); idleFrom = null;
+    if (document.hidden) { flush(); hiddenAt = Date.now(); return; }
+    lastTick = Date.now(); lastInput = Date.now();
     get(function (s) {
       var now = Date.now();
       s.hops = s.hops.filter(function (t) { return now - t < 600000; });
       s.hops.push(now);
       put({ hops: s.hops });
+      render(s);
     });
-    schedule(4000 + Math.random() * 6000);
+    var away = Date.now() - hiddenAt;
+    if (hiddenAt && away >= 120000) setTimeout(function () {
+      event("back" + Math.floor(Date.now() / 1800000), function () {
+        return { lines: pick([
+          [["HOST", "You're back! You were away from this tab for " + mins(away) + ". We kept your seat."]],
+          [["GOSSIP", "Where did you go for " + mins(away) + "? Who was it? You can tell us."]],
+          [["MGMT", mins(away) + " away from this tab. I'll mark it as a lunch break. It might not have been lunch."]]
+        ]), r: "this tab was hidden for " + mins(away) };
+      }, 1);
+    }, 1500);
   });
 
-  function onInput() {
+  function onInput(e) {
+    if (e && inPanel(e)) return;
     var idle = Date.now() - lastInput;
-    if (idle >= 5 * 60000 && !document.hidden && document.hasFocus()) { idleFrom = idle; idleAt = Date.now(); }
     lastInput = Date.now();
-    if (idleFrom) schedule(1500);
+    if (idle >= 5 * 60000 && !document.hidden && document.hasFocus()) {
+      event("idle" + Math.floor(Date.now() / 3600000), function () {
+        return { lines: pick([
+          [["CURSOR", "Oh. We're moving again. " + mins(idle) + ". I thought I'd been retired."]],
+          [["LIZARD", mins(idle) + " without moving. Were you asleep? I was asleep."]],
+          [["MGMT", "You didn't touch anything for " + mins(idle) + ". I'll need a note from your doctor."]]
+        ]), r: "no mouse, key or scroll on this tab for " + mins(idle) };
+      }, 1);
+    }
   }
   addEventListener("mousemove", onInput, { passive: true, capture: true });
-  addEventListener("keydown", onInput, { passive: true, capture: true });
-  addEventListener("wheel", onInput, { passive: true, capture: true });
   addEventListener("touchstart", onInput, { passive: true, capture: true });
+  addEventListener("keydown", function (e) {
+    if (inPanel(e)) return;
+    onInput();
+    if (e.key === "Backspace" && ++backspaces === 40) event("", function () {
+      return { lines: [["TALLY", "40 backspaces on this page. I don't know what you deleted. I only count."], ["XBTN", "Closing things one letter at a time. I see what you're doing."]], r: "40 Backspace presses on this page (counted, never read)" };
+    }, 1);
+  }, { passive: true, capture: true });
 
-  var topExit = false;
-  document.addEventListener("mouseout", function (e) {
-    if (!e.relatedTarget && e.clientY <= 0) { topExit = Date.now(); schedule(300); }
+  // scrolling
+  var scrolls = [], hitBottom = false, sentFast = false;
+  addEventListener("scroll", function () {
+    onInput();
+    var now = Date.now(), y = scrollY, sc = screens();
+    scrolls.push([now, y]); scrolls = scrolls.filter(function (p) { return now - p[0] < 5000; });
+    if (!sentFast && scrolls.length > 2) {
+      var dist = Math.round(Math.abs(y - scrolls[0][1]) / Math.max(1, innerHeight));
+      if (dist >= 12) { sentFast = true; event("", function () {
+        return { lines: pick([[["CURSOR", dist + " screens in five seconds. I'm going to be sick."], ["LIZARD", "Slow down. Nothing down there is chasing you."]],
+                              [["DREAD", "You went past " + dist + " screens in five seconds. Whatever was in there, it's gone now."]]]),
+                 r: "you scrolled about " + dist + " window-heights in 5 seconds" }; }, 1); }
+    }
+    if (!hitBottom && sc >= 4 && y + innerHeight >= document.documentElement.scrollHeight - 8) {
+      hitBottom = true;
+      event("", function () {
+        return { lines: pick([[["GRAND", "The bottom. " + sc + " screens down. Few have come this far."], ["TALLY", "Anyone who opened this page could have."]],
+                              [["GOSSIP", "You went all the way to the bottom? All " + sc + " screens?"], ["TALLY", "We scrolled. Reading is unconfirmed."]],
+                              [["HOST", "You made it to the bottom! I'd give you a prize. I can't hold things."]]]),
+                 r: "you scrolled to the end of a page " + sc + " window-heights tall" };
+      }, 1);
+    }
+  }, { passive: true });
+
+  // copying (only how many words, never which)
+  var lastCopy = 0;
+  document.addEventListener("copy", function (e) {
+    if (inPanel(e)) return;
+    var w = words(String(getSelection() || ""));
+    if (!w || Date.now() - lastCopy < 60000) return;
+    lastCopy = Date.now();
+    event("", function () {
+      return { lines: pick([[["MGMT", "You copied " + n(w, "word", "words") + ". I'll need a citation."]],
+                            [["GOSSIP", "You copied something! " + n(w, "word", "words") + ". Where's it going? Who's it for?"]],
+                            [["TALLY", n(w, "word", "words") + " copied."], ["GRAND", "And now they live twice."]]]),
+               r: "you copied a selection of " + n(w, "word", "words") + " (counted, not read)" };
+    }, 1);
   });
 
-  /* ---------- the thoughts ---------- */
-  // What kind of site this is, for the well-known ones only. Unknown sites get the general lines.
-  var KINDS = {
-    video: /(^|\.)(youtube\.com|youtu\.be|twitch\.tv|netflix\.com|hulu\.com|disneyplus\.com|primevideo\.com|max\.com|crunchyroll\.com|vimeo\.com|kick\.com)$/,
-    social: /(^|\.)(reddit\.com|x\.com|twitter\.com|facebook\.com|instagram\.com|tiktok\.com|bsky\.app|threads\.net|tumblr\.com|linkedin\.com|discord\.com|mastodon\.social)$/,
-    shop: /(^|\.)(amazon\.[a-z.]+|ebay\.[a-z.]+|etsy\.com|walmart\.com|target\.com|bestbuy\.com|aliexpress\.com|temu\.com|newegg\.com)$/,
-    code: /(^|\.)(github\.com|gitlab\.com|stackoverflow\.com|developer\.mozilla\.org|npmjs\.com|pypi\.org|codepen\.io|replit\.com)$/,
-    news: /(^|\.)(cnn\.com|bbc\.co\.uk|bbc\.com|nytimes\.com|theguardian\.com|reuters\.com|apnews\.com|washingtonpost\.com|foxnews\.com|nbcnews\.com|news\.ycombinator\.com|theverge\.com)$/,
-    ai: /(^|\.)(claude\.ai|chatgpt\.com|chat\.openai\.com|gemini\.google\.com|perplexity\.ai|copilot\.microsoft\.com)$/,
-    mail: /(^|\.)(mail\.google\.com|outlook\.live\.com|outlook\.office\.com|mail\.yahoo\.com|proton\.me|mail\.proton\.me)$/,
-    search: /(^|\.)(google\.[a-z.]+|bing\.com|duckduckgo\.com|search\.brave\.com|ecosia\.org)$/,
-    game: /(^|\.)(store\.steampowered\.com|steamcommunity\.com|itch\.io|chess\.com|lichess\.org|epicgames\.com|roblox\.com)$/
-  };
-  function kind(h) {
-    for (var k in KINDS) if (KINDS[k].test(h)) return k;
-    return "";
-  }
-
-  // id, then [voice, text] lines. Lines are picked at random, skipping any seen in the last week.
-  // The receipt under the bubble carries the number, so most lines don't repeat it.
-  function bank(f) {
-    var H = f.host, T = f.t, D = f.day;
-    return {
-      firstInstall: [
-        ["n1", ["MGMT", "First website since you installed us: " + H + ". I'll be taking notes. A lot of notes."]],
-        ["n2", ["HOST", "Hello! We just moved in. First site we've seen: " + H + ". I'll be in the corner."]],
-        ["n3", ["XBTN", "You installed nine voices. Your first stop with us is " + H + ". I'm up in the corner if this was a mistake."]]
-      ],
-      first: [
-        ["f1", ["MGMT", "First website of the day: " + H + ". Bold. Let's see if it pays off."]],
-        ["f2", ["MGMT", "Good morning. Today's first site is " + H + ". I've already scheduled a follow-up."], f.hr < 12],
-        ["f3", ["HOST", "First site of the day: " + H + ". I'll be in the corner. I live in the corner now."]],
-        ["f5", ["CURSOR", "Morning. First stop was " + H + ". I'll be pointing at things all day. Mostly away from the X."], f.hr < 12],
-        ["f6", ["XBTN", "First site of the day. I'm up in the corner if you need me. You will need me."]]
-      ],
-      t10: {
-        "": [["a1", ["MGMT", "We need to talk about " + H + "."], ["HOST", "Leave them alone. It's a nice site."]],
-             ["a3", ["TALLY", "I've been timing this. Don't look at the receipt."]],
-             ["a4", ["HOST", "Does " + H + " know you're seeing other websites?"]]],
-        video: [["v1", ["MGMT", "I'll file " + H + " under professional development."]],
-                ["v2", ["LIZARD", "Moving pictures. Good. Stay still. Stay warm."]],
-                ["v4", ["GOSSIP", "What are we watching? Is it good? Is it about people? I love people."]]],
-        social: [["s1", ["GOSSIP", "Anyone interesting on " + H + "? Don't tell me. Tell me."]],
-                 ["s2", ["CURSOR", "Scroll. Scroll. Scroll. Where does it end?"], ["TALLY", "It doesn't."]],
-                 ["s4", ["HOST", "It's very loud on " + H + ". You can sit in the corner with me for a bit."]]],
-        shop: [["p1", ["MGMT", "Is this an approved purchase? Who approved it? Was it me?"]],
-               ["p2", ["LIZARD", "You are hunting. I respect hunting."]]],
-        code: [["c1", ["MGMT", "I'll put this down as work. Don't make me regret it."]],
-               ["c2", ["GRAND", "A builder. A maker of things. An architect of the future."], ["TALLY", "For at least ten minutes."]]],
-        news: [["n1", ["DREAD", "Whatever " + H + " says, I already feel worse."]],
-               ["n2", ["MGMT", "Let's take this offline. All of it. The whole world."]]],
-        ai: [["i1", ["GOSSIP", "You're talking to another voice on " + H + ", aren't you."], ["HOST", "We're right here."]],
-             ["i2", ["TALLY", "Asking a computer for help, inside a computer, while we watch."], ["GRAND", "Beautiful."]]],
-        mail: [["m1", ["MGMT", "Per my last thought."]],
-               ["m2", ["DREAD", "There's always one more. There is always one more."]]],
-        search: [["q1", ["GOSSIP", "Asking " + H + " things. You could have asked me."], ["TALLY", "You don't know anything."], ["GOSSIP", "I'd have made something up."]]],
-        game: [["g1", ["MGMT", "Team building. I'll allow it. I won't approve it, but I'll allow it."]]]
-      },
-      t30: {
-        "": [["b1", ["MGMT", "At this point " + H + " is a recurring meeting."]],
-             ["b2", ["LIZARD", "Look away from the screen. Look at something far away. A wall counts."]],
-             ["b3", ["HOST", "They should give you a key to " + H + "."]]],
-        video: [["v3", ["GRAND", "A connoisseur. A critic. A scholar of the couch."]]],
-        social: [["s3", ["GOSSIP", "I need to know everything that happened on " + H + ". Who said what."]]],
-        mail: [["m3", ["XBTN", "You could close the email. I'm right here. I'm always right here."]]]
-      },
-      t60: [
-        ["h1", ["MGMT", "I've added " + H + " to your calendar. Retroactively."]],
-        ["h2", ["MGMT", "Let's sync on " + H + "."], ["LIZARD", "No."]],
-        ["h3", ["DREAD", "That hour is not coming back. I checked."]],
-        ["h4", ["XBTN", "I've been right here the whole time. Just so you know."]]
-      ],
-      t120: [
-        ["w1", ["DREAD", "I'm not judging. I'm counting. Judging comes later."]],
-        ["w2", ["MGMT", "You should be getting paid for this. Are you? Can I see the contract?"]],
-        ["w3", ["LIZARD", "Stand up. The chair has had enough of you."]],
-        ["w4", ["TALLY", "I'm not saying anything."], ["TALLY", "Read the receipt."]]
-      ],
-      loads: [
-        ["l1", ["TALLY", "I'm not keeping score."], ["TALLY", "I am the score."]],
-        ["l2", ["MGMT", "Strong engagement with " + H + ". Worrying engagement."]],
-        ["l3", ["GOSSIP", "Back on " + H + " again. Is something going on over there?"]],
-        ["l6", ["CURSOR", "I know my way around " + H + " now. Down, down, click. I could do it in my sleep."], ["LIZARD", "Do it in your sleep."]]
-      ],
-      loadsBig: [
-        ["l4", ["HOST", "You should get your mail delivered to " + H + "."]]
-      ],
-      sites: [
-        ["x1", ["TALLY", "I've counted every site I could see today. I'll never tell anyone. I don't know anyone."]],
-        ["x2", ["MGMT", "That many websites. I'm going to need a summary of each one by end of day."], ["TALLY", "I can do that."], ["MGMT", "Not you."]]
-      ],
-      sitesBig: [
-        ["x4", ["LIZARD", "That many websites. I'm lying down. One of us has to."]],
-        ["x5", ["MGMT", "This isn't browsing anymore. This is a portfolio."]]
-      ],
-      hops: [
-        ["o1", ["GOSSIP", "Tab after tab after tab. Who are you looking for? Is it me?"]],
-        ["o2", ["MGMT", "We call that multitasking. We call it that so we don't have to call it something else."]],
-        ["o3", ["CURSOR", "Tab. Tab. Tab. Tab."], ["HOST", "Please pick one. I'm in all of them."]]
-      ],
-      idle: [
-        ["d1", ["CURSOR", "Oh. We're moving again. I thought I'd been retired."]],
-        ["d2", ["MGMT", "You didn't touch anything for " + f.idle + ". I'll need a note from your doctor."]],
-        ["d3", ["LIZARD", "Were you asleep? I was asleep."]],
-        ["d4", ["HOST", "You're back! I kept everything exactly where you left it. I couldn't move it anyway."]]
-      ],
-      top: [
-        ["u1", ["XBTN", "Up here. I'm always up here."]],
-        ["u2", ["XBTN", "You keep coming up here and not clicking me."]],
-        ["u3", ["MGMT", "Heading for the X? Let's not make any decisions we can't walk back."]],
-        ["u4", ["XBTN", "Closer. Closer. No? Fine."]],
-        ["u5", ["GOSSIP", "Going up to see the X again? What do you two even talk about?"], ["XBTN", "Endings."]]
-      ],
-      late: [
-        ["z1", ["LIZARD", "It's " + T + ". The part of you that's older than websites would like to lie down."], ["MGMT", "Noted. Denied."]],
-        ["z2", ["MGMT", "It's " + T + ". I'm not approving overtime for this."]],
-        ["z3", ["DREAD", "It's " + T + " and you're on " + H + ". Of all the places to be at " + T + "."]]
-      ],
-      night: [
-        ["y2", ["MGMT", "It's " + T + ". Let's wrap up. Let's wrap up for real this time. Let's wrap up."]],
-        ["y3", ["LIZARD", "It's " + T + ". Every part of you that isn't your eyes has gone to bed."], ["XBTN", "I can show the eyes the way out."]]
-      ],
-      skive: [
-        ["k1", ["MGMT", "It's " + T + " on a " + D + " and you're on " + H + ". I'm going to pretend I didn't see this. I'm writing it down while I pretend."]],
-        ["k2", ["MGMT", T + " on a " + D + ". " + H + ". I'm not mad. I'm putting it in a spreadsheet, which is worse."]]
-      ],
-      weekend: [
-        ["e1", ["MGMT", "It's " + D + ". I'm not allowed to manage you on weekends."], ["MGMT", "Anyway. " + H + "?"]],
-        ["e2", ["LIZARD", "It's " + D + ". Management isn't allowed in today."], ["MGMT", "I'm just visiting."]]
-      ],
-      battery: [
-        ["r1", ["DREAD", f.pct + "% battery and you're on " + H + ". Is this how you want to go?"]],
-        ["r2", ["DREAD", f.pct + "%. Not plugged in. I'm not panicking. I'm just going to say the number again. " + f.pct + "%."]],
-        ["r4", ["XBTN", "Low battery. I can make this quick."]]
-      ],
-      asked: [
-        ["q2", ["MGMT", "Quick sync on " + H + ". Great work, or the opposite. Hard to say."]],
-        ["q4", ["TALLY", "You asked. It's all on the receipt."]],
-        ["q5", ["GOSSIP", "You pressed a button just to hear from me. Nobody presses a button for Gossip."], ["HOST", "Somebody did."]],
-        ["q6", ["MGMT", "Per your request, here is a thought. Please rate this thought from one to five."]],
-        ["q7", ["CURSOR", "You clicked a button to make us talk. I helped. I'm the one who clicked it."]],
-        ["q8", ["XBTN", "You opened a menu just to hear from us. Next time, try the other button. Up here."]]
-      ]
-    };
-  }
-  function choose(list, used) {
-    var now = Date.now(), WEEK = 7 * 86400000;
-    list = list.filter(function (x) { return x[2] !== false && typeof x[1][0] === "string"; });
-    var fresh = list.filter(function (x) { return !used[x[0]] || now - used[x[0]] > WEEK; });
-    var pool = fresh.length ? fresh : list.slice().sort(function (a, b) { return (used[a[0]] || 0) - (used[b[0]] || 0); }).slice(0, 1);
-    var x = pick(pool);
-    // lines may be [id, line] or [id, line, condition] or [id, line, line]
-    var lines = x.slice(1).filter(function (l) { return Array.isArray(l); });
-    return { id: x[0], lines: lines };
-  }
-
-  // Each candidate: {key (said at most once a day), list (of variants), receipt}
-  function candidates(s) {
-    var out = [], now = new Date(), hr = now.getHours(), wd = now.getDay();
-    var h = s.hosts[host] || { ms: 0, loads: 0 };
-    var sites = Object.keys(s.hosts).length;
-    var hops = s.hops.filter(function (x) { return Date.now() - x < 600000; }).length;
-    var k = kind(host);
-    var f = { host: host, t: clock(now), day: DAYS[wd], hr: hr, loads: h.loads, sites: sites, hops: hops,
-              mins: mins(h.ms), idle: idleFrom ? mins(idleFrom) : "", pct: battery ? Math.round(battery.level * 100) : 0 };
-    var B = bank(f), slot = Math.floor(Date.now() / 3600000);
-    function add(key, list, receipt) { out.push({ key: key, list: list, receipt: receipt }); }
-
-    if (!s.firstDone && s.firstHost) {
-      var BF = bank(Object.assign({}, f, { host: s.firstHost }));
-      if (s.installedDay === today()) add("first", BF.firstInstall, "first site seen since install: " + s.firstHost + ", at " + s.firstAt);
-      else add("first", BF.first, "first site seen today: " + s.firstHost + ", at " + s.firstAt);
-    }
-    if (topExit && Date.now() - topExit < 10000) { topExit = false; if (Math.random() < 0.5) add("top", B.top, "your cursor left the page through the top edge"); }
-    if (idleFrom && Date.now() - idleAt > 30000) idleFrom = null;
-    if (idleFrom) { add("idle" + slot, B.idle, "no mouse, key or scroll on this tab for " + f.idle); idleFrom = null; }
-    if (hops >= 15) add("hops" + Math.floor(Date.now() / 1800000), B.hops, hops + " times a tab came into view in the last 10 minutes");
-
-    var work = wd >= 1 && wd <= 5 && hr >= 9 && hr < 17;
-    if (work && (k === "video" || k === "social" || k === "game" || k === "shop") && h.ms >= 3 * 60000)
-      add("skive", B.skive, "the clock says " + f.t + " on a " + f.day + "; this site was on screen for " + f.mins + " today");
-
-    var r = "this site was on screen for " + f.mins + " today";
-    if (h.ms >= 120 * 60000) add("t120" + host, B.t120, r);
-    else if (h.ms >= 60 * 60000) add("t60" + host, B.t60, r);
-    else if (h.ms >= 30 * 60000) add("t30" + host, (B.t30[k] || []).concat(B.t30[""]), r);
-    else if (h.ms >= 10 * 60000) add("t10" + host, (B.t10[k] || []).concat(B.t10[k] ? [] : B.t10[""]), r);
-
-    if (h.loads >= 25) add("lb" + host, B.loadsBig, "at least " + h.loads + " page loads on this site today");
-    else if (h.loads >= 6) add("l" + host, B.loads, "at least " + h.loads + " page loads on this site today");
-
-    if (sites >= 50) add("sb", B.sitesBig, sites + " different hostnames seen today");
-    else if (sites >= 15) add("s", B.sites, sites + " different hostnames seen today");
-
-    if (battery && !battery.charging && battery.level <= 0.2) add("bat" + Math.ceil(f.pct / 5), B.battery, "navigator.getBattery(): " + f.pct + "%, not charging");
-
-    if (hr < 5) add("late", B.late, "the clock says " + f.t);
-    else if (hr >= 22) add("night", B.night, "the clock says " + f.t);
-    if ((wd === 0 || wd === 6) && hr >= 10) add("weekend", B.weekend, "the clock says " + f.day);
-    s._asked = { key: "asked" + Date.now(), list: B.asked, receipt: "you asked; " + f.mins + " of this site on screen today, " + f.loads + (f.loads === 1 ? " page load, " : " page loads, ") + f.sites + (f.sites === 1 ? " hostname" : " hostnames") + " today" };
-    return out;
-  }
-
-  /* ---------- deciding when to speak ---------- */
-  var timer = null, showing = false;
-  function schedule(ms) { clearTimeout(timer); timer = setTimeout(function () { maybeSpeak(false); }, ms); }
-
-  function maybeSpeak(force) {
-    if ((document.hidden && !force) || showing || document.fullscreenElement) return;
+  // the cursor leaving through the top edge, where the X button lives
+  document.addEventListener("mouseout", function (e) {
+    if (e.relatedTarget || e.clientY > 0) return;
     get(function (s) {
-      var st = s.settings, now = Date.now();
+      s.life.exits = (s.life.exits || 0) + 1;
+      var td = (s.exitsToday || 0) + 1;
+      put({ life: s.life, exitsToday: td });
+      if (s.life.exits >= 100 && !s.life.said100) {
+        if (!allowed(s, 1)) return;
+        s.life.said100 = true; put({ life: s.life });
+        post([["XBTN", "That's " + s.life.exits + " times you've come up to see me since we moved in. I've started to think of us as friends."], ["HOST", "Friends don't close each other."], ["XBTN", "Some do."]], s.life.exits + " times your cursor left a page through the top edge since install", 1);
+        return;
+      }
+      if (Math.random() < 0.35) event("", function () {
+        return { lines: pick([
+          [["XBTN", "Up here. I'm always up here."]],
+          [["XBTN", "You keep coming up here and not clicking me."]],
+          [["XBTN", "Closer. Closer. No? Fine."]],
+          [["GOSSIP", "Going up to see the X again? What do you two even talk about?"], ["XBTN", "Endings."]],
+          td >= 5 ? [["XBTN", "That's " + td + " visits to the top of the window today."], ["TALLY", "I'm counting. The X Button is hoping."]] : [["MGMT", "Heading for the X? Let's not make any decisions we can't walk back."]]
+        ]), r: "your cursor left the page through the top edge; " + n(td, "time", "times") + " today" };
+      }, 1);
+    });
+  });
+
+  // unread counts in the tab title, like "(14) Inbox"
+  function readTitle() {
+    var m = /^\((\d+)\)/.exec(document.title || ""), c = m ? +m[1] : null;
+    if (c !== null && titleCount !== null && c - titleCount >= 5) {
+      var from = titleCount;
+      event("", function () { return { lines: [["DREAD", "The title just went from (" + from + ") to (" + c + ")."], ["MGMT", "Let's not look at it. Let's look at it later. Let's never look at it."]], r: "the tab title's count went from (" + from + ") to (" + c + ")" }; }, 1);
+    }
+    if (c !== null) titleCount = c;
+  }
+  readTitle();
+  try { var tEl = q("title"); if (tEl) new MutationObserver(readTitle).observe(tEl, { childList: true, characterData: true, subtree: true }); } catch (e) {}
+
+  // sites that change pages without reloading (GitHub, YouTube): react to the new address
+  var lastPath = location.pathname + location.search;
+  setInterval(function () {
+    var p = location.pathname + location.search;
+    if (p === lastPath) return;
+    lastPath = p; hitBottom = false; sentFast = false; backspaces = 0;
+    var mine = p, tries = 0;
+    setTimeout(function talk() {
+      if (lastPath !== mine) return;
+      get(function (s) { if (!allowed(s, 1)) { if (++tries < 12) setTimeout(talk, 5000); return; } var x = pageTalk(s); if (x) post(x.lines, x.r, 1); });
+    }, 2500);
+  }, 1000);
+
+  // filling the silence, only while you're actually using the page
+  function ambient(force) {
+    get(function (s) {
       if (!force) {
-        if (!st.on || now < (st.muteUntil || 0) || st.hushed[host]) return;
-        if (now - (s.lastShown || 0) < (GAP[st.freq] || GAP.normal) * 60000) return;
+        if (!allowed(s, 0)) return;
+        if (Date.now() - lastInput > 90000 || !document.hasFocus()) return;
       }
-      var c = candidates(s).filter(function (x) { return !s.said[x.key]; });
-      if (!c.length) {
-        if (!force) return;
-        c = [s._asked];
-      }
-      var cand = c[0];
-      s.used = s.used || {};
-      var ch = choose(cand.list, s.used);
-      var th = { lines: ch.lines, receipt: cand.receipt };
-      s.said[cand.key] = now;
-      s.used[ch.id] = now;
-      var patch = { said: s.said, lastShown: now, used: s.used };
-      if (cand.key === "first") patch.firstDone = true;
-      put(patch);
-      show(th);
+      var c = dayTalk(s)[0];
+      if (c.key) { s.said[c.key] = Date.now(); if (c.extra === "ask") s.said.ask = Date.now(); put({ said: s.said }); }
+      var after = c.extra === "ask" ? function () {
+        showChoices([{ label: "Yes, it's work", fn: function () { answerWork(true); } }, { label: "No", fn: function () { answerWork(false); } }]);
+      } : null;
+      post(choose(c.list, s.used), c.r, force ? 2 : 0, force, after);
     });
   }
-
-  /* ---------- the bubble ---------- */
-  function show(th) {
-    showing = true;
-    var holder = document.createElement("div");
-    holder.style.cssText = "all:initial;position:fixed;right:18px;bottom:18px;z-index:2147483647;";
-    var root = holder.attachShadow({ mode: "closed" });
-    root.innerHTML =
-      '<style>' +
-      '.b{font:15px/1.45 Georgia,"Palatino Linotype",serif;color:#e7e5ee;background:#18171d;border:1px solid #34323e;border-radius:6px;' +
-      'box-shadow:0 8px 28px rgba(0,0,0,.35);padding:12px 14px 10px;width:300px;max-width:calc(100vw - 36px);box-sizing:border-box;' +
-      'opacity:0;transform:translateY(6px);transition:opacity .3s,transform .3s}' +
-      '.b.in{opacity:1;transform:none}' +
-      '.l{margin:0 0 6px}' +
-      '.w{font:700 11px/1 system-ui,sans-serif;letter-spacing:.12em;text-transform:uppercase;margin-right:6px}' +
-      '.r{font:11px/1.35 ui-monospace,Consolas,monospace;color:#9c99a8;margin:2px 0 8px}' +
-      '.f{display:flex;gap:8px;justify-content:flex-end}' +
-      'button{font:600 11px/1 system-ui,sans-serif;color:#9c99a8;background:none;border:1px solid #34323e;border-radius:4px;padding:5px 8px;cursor:pointer}' +
-      'button:hover,button:focus-visible{color:#e7e5ee;border-color:#9c99a8;outline:none}' +
-      '@media (prefers-reduced-motion:reduce){.b{transition:none}}' +
-      '</style><div class="b" role="status"><div class="t"></div><div class="r"></div>' +
-      '<div class="f"><button class="m">Quiet for 1 hour</button><button class="x">Close</button></div></div>';
-    var box = root.querySelector(".b"), tx = root.querySelector(".t");
-    root.querySelector(".r").textContent = "receipt: " + th.receipt;
-    document.documentElement.appendChild(holder);
-    requestAnimationFrame(function () { box.classList.add("in"); });
-
-    var total = 0, hovering = false, closed = false;
-    function addLine(i) {
-      var v = VOICES[th.lines[i][0]];
-      var p = document.createElement("p"); p.className = "l";
-      var w = document.createElement("span"); w.className = "w"; w.style.color = v.c; w.textContent = v.name;
-      p.appendChild(w); p.appendChild(document.createTextNode(th.lines[i][1]));
-      tx.appendChild(p);
-    }
-    addLine(0);
-    th.lines.forEach(function (l) { total += Math.max(3000, l[1].length * 70); });
-    // a reply appears after there's been time to read the first line
-    var i = 1;
-    (function more() {
-      if (i >= th.lines.length) return;
-      setTimeout(function () { if (!closed) { addLine(i++); more(); } }, Math.max(1800, th.lines[i - 1][1].length * 40));
-    })();
-    var left = total + 6000;
-    box.addEventListener("mouseenter", function () { hovering = true; });
-    box.addEventListener("mouseleave", function () { hovering = false; });
-    var iv = setInterval(function () { if (!hovering && !document.hidden) left -= 500; if (left <= 0) close(); }, 500);
-    function close() {
-      if (closed) return; closed = true; clearInterval(iv);
-      box.classList.remove("in");
-      setTimeout(function () { holder.remove(); showing = false; }, 350);
-    }
-    root.querySelector(".x").onclick = close;
-    root.querySelector(".m").onclick = function () {
-      get(function (s) { s.settings.muteUntil = Date.now() + 3600000; put({ settings: s.settings }); });
-      close();
-    };
+  function answerWork(v) {
+    append({ v: "YOU", t: v ? "Yes, it's work." : "No." });
+    get(function (s) { s.work[host] = { v: v, day: today() }; put({ work: s.work }); });
+    post(v ? [["MGMT", "Noted. I'll hold you to that."], ["GOSSIP", "Sure it is."]] : [["MGMT", "Noted. I respect the honesty. I'm also writing it down."], ["TALLY", "It's saved in this browser. Nowhere else."]], "your answer, saved in this browser", 2, true);
   }
 
-  // the popup's "Say something now" button
+  /* ---------- start ---------- */
+  function render(s) {
+    if (!holder) return;
+    var st = s.settings;
+    holder.style.display = st.on && !st.hushed[host] ? "" : "none";
+    var muted = Date.now() < (st.muteUntil || 0);
+    quiet.classList.toggle("on", muted);
+    quiet.textContent = muted ? "quiet till " + clock(new Date(st.muteUntil)) : "quiet";
+    renderAll(s.room);
+  }
+  get(function (s) {
+    buildPanel();
+    var ui = s.ui || {};
+    receiptsOn = !!ui.receipts;
+    list.classList.toggle("r", receiptsOn); root.querySelector('[data-a="r"]').classList.toggle("on", receiptsOn);
+    setOpen(ui.open !== false);
+    render(s);
+    booting = false;
+    setTimeout(arrive, 2500);
+  });
+
+  if (alive()) chrome.storage.onChanged.addListener(function (ch) {
+    if (!holder) return;
+    if (ch.room || ch.settings) get(render);
+    // shrinking or opening the chat in one tab does the same in the others
+    if (ch.ui && document.hidden) { var u = ch.ui.newValue || {}; if (u.open !== undefined && u.open !== open) { booting = true; setOpen(u.open); booting = false; } }
+  });
+
   if (alive()) chrome.runtime.onMessage.addListener(function (msg, _from, reply) {
-    if (msg && msg.ybht === "now") { reply(true); setTimeout(function () { maybeSpeak(true); }, 400); }
+    if (msg && msg.ybht === "now") { reply(true); if (!open) setOpen(true); setTimeout(function () { ambient(true); }, 300); }
     if (msg && msg.ybht === "host") reply(host);
   });
 
-  // first look a little while after the page settles, then check now and then
-  schedule(20000 + Math.random() * 20000);
-  setInterval(function () { if (!timer || !showing) maybeSpeak(false); }, 120000);
+  setInterval(function () { ambient(false); }, 20000);
+  document.addEventListener("fullscreenchange", function () { if (holder) holder.style.visibility = document.fullscreenElement ? "hidden" : ""; });
 })();

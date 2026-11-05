@@ -31,12 +31,13 @@ $("now").onclick = function () {
     });
   });
 };
+$("clear").onclick = function () { chrome.storage.local.set({ room: [] }); $("status").textContent = "Chat history cleared."; };
 $("hush").onclick = function () {
   activeTab(function (tab) {
     if (!tab) return;
     chrome.tabs.sendMessage(tab.id, { ybht: "host" }, function (host) {
       if (chrome.runtime.lastError || !host) { $("status").textContent = "They don't talk on this page anyway."; return; }
-      settings(function (st) { st.hushed[host] = true; save(st); $("status").textContent = "They'll stay quiet on " + host + "."; });
+      settings(function (st) { st.hushed[host] = true; save(st); $("status").textContent = "The chat is hidden on " + host + "."; });
     });
   });
 };
