@@ -75,8 +75,11 @@ dialog#get code{font:14px ui-monospace,Consolas,monospace;background:var(--bg);p
 .dlrow{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
 .close{font:600 14px system-ui,sans-serif;background:none;border:1px solid var(--rule);color:var(--ink);padding:8px 14px;border-radius:2px;cursor:pointer}
 .phone-note{display:none}
-@media (pointer:coarse) and (hover:none){.phone-note{display:block}dialog#get .dl{display:none}}
+@media (pointer:coarse) and (hover:none){.phone-note{display:block}dialog#get .dl,dialog#get .desk{display:none}}
 @media (max-width:760px){
+  footer{position:static;margin-top:8px}
+  .newlines{bottom:calc(16px + env(safe-area-inset-bottom,0px))}
+  #start .getbtn{text-align:center}
   .wrap{grid-template-columns:1fr;gap:18px;padding-block:18px 110px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
   aside{order:2}
   .roster{display:flex;flex-wrap:wrap;gap:0 14px}
@@ -116,6 +119,8 @@ dialog#get code{font:14px ui-monospace,Consolas,monospace;background:var(--bg);p
   <h2 id="gettitle">Get them on every website</h2>
   <p>The extension puts a small chat room in the corner of every website you visit. The nine voices talk about what's actually on the page, and you can talk back. Everything stays on your computer.</p>
   <p class="phone-note"><b>On a phone?</b> Extensions don't work on most phones. Open this page on a computer to get it. The voices on this page work fine here.</p>
+  <div class="desk">
+  <p><b>Chrome, Brave or Edge on a computer. Takes about two minutes.</b><span id="notchrome"></span></p>
   <a class="dl" href="browser-has-thoughts-extension.zip" download>Download the extension</a>
   <ol>
     <li>Find the file you just downloaded and unzip it. On Windows: right-click it, then <b>Extract All</b>. On a Mac: double-click it.</li>
@@ -124,6 +129,7 @@ dialog#get code{font:14px ui-monospace,Consolas,monospace;background:var(--bg);p
     <li>Click <b>Load unpacked</b> and pick the unzipped folder, the one called <b>browser-has-thoughts-extension</b>.</li>
   </ol>
   <p>That's it. Open any website and the chat appears in the bottom corner. Press <b>quiet</b> to hush them for an hour, or remove the extension from the same page any time. Works in Chrome, Brave and Edge on a computer. Not Firefox or Safari yet.</p>
+  </div>
   <div class="dlrow"><span></span><button class="close" id="getclose">Close</button></div>
 </dialog>
 <button class="newlines" id="newlines">New thoughts below ↓</button>
@@ -211,7 +217,7 @@ function finale(){
     else lines.push(["DREAD","Battery: unknown. Still. I'd like that in the minutes."]);
     lines=lines.concat([
       ["GOSSIP","And I still don't know where you go when you leave."],
-      ["CURSOR",T("I know. I go everywhere you go. On this page.","I know. I pressed Listen. Everything since then is on me.")],
+      ["CURSOR",T("I know. I go everywhere you go. On this page.","I know where you go. I'm the one who takes you there.")],
       ["GRAND",!noted?"You woke all nine of us. Remember it. I can't write it down in this browser.":before?"You've woken all of us before, in this browser. You came back to do it again.":"Nobody has woken all nine of us in this browser before. Nobody."],
       ["TALLY",!noted?"This browser won't let us keep notes.":before?"That's true. I keep a note.":"That's true. I checked the note. There was no note."],
       ["LIZARD","Can we sleep now."],
@@ -236,11 +242,14 @@ var queue=[], busy=false, lastLineAt=0, started=false, paused=false;
 // lines heard on your last two visits sit out this time (kept as short keys in this browser only)
 var seen={}; try{ seen=JSON.parse(store("ybht_seen")||"{}")||{}; }catch(e){ seen={}; }
 function lkey(t){ return String(t||"").replace(/[0-9][0-9,.:%]*/g,"#").replace(/\s+(AM|PM)\b/g,"").slice(0,60); }
-function say(lines,receipt,prio){
+function recentlySeen(lines){ var k=lines&&lines[0]?lkey(lines[0][1]):""; return k && seen[k] && seen[k]<visits && visits-seen[k]<=2; }
+function alt(list){ for(var i=0;i<list.length;i++) if(!recentlySeen(list[i])) return list[i]; return null; }
+function say(lines,receipt,prio,opt){
+  if(!lines||!lines.length) return;
   var k=lines&&lines[0]?lkey(lines[0][1]):"";
   if((prio||1)<3 && k && seen[k] && seen[k]<visits && visits-seen[k]<=2) return;
   if(k){ seen[k]=visits; var ks=Object.keys(seen); if(ks.length>300) ks.sort(function(a,b){return seen[a]-seen[b]}).slice(0,ks.length-300).forEach(function(x){delete seen[x]}); store("ybht_seen",JSON.stringify(seen)); }
-  queue.push({lines:lines,receipt:receipt,prio:prio||1,t:Date.now()});
+  queue.push({lines:lines,receipt:receipt,prio:prio||1,t:Date.now(),idle:!!(opt&&opt.idle)});
   queue.sort(function(a,b){return b.prio-a.prio || a.t-b.t});
   // keep it from piling up: drop the least important thought (the last one after sorting)
   while(queue.length>6) queue.pop();
@@ -250,6 +259,8 @@ function pump(){
   if(busy||paused||!started||!queue.length) return;
   busy=true;
   var th=queue.shift();
+  while(th && th.idle && lastInput>th.t) th=queue.shift(); // you moved since: not idle any more
+  if(!th){ busy=false; return; }
   var i=0;
   (function next(){
     if(i>=th.lines.length){ busy=false; setTimeout(pump,1200); return; }
@@ -269,6 +280,23 @@ addEventListener("scroll",function(){
 },{passive:true});
 $("newlines").onclick=function(){scrollTo({top:document.body.scrollHeight,behavior:reduced?"auto":"smooth"});};
 
+// receipts in plain words (the technical name stays in brackets where it helps)
+var PLAIN=[
+  [/new Date\(\)\.getDay\(\) says /,"your clock says it's "],[/new Date\(\) says /,"your clock says "],
+  [/navigator\.getBattery\(\): /,"your battery: "],[/navigator\.getBattery was refused here/,"the browser wouldn't share the battery"],[/navigator\.getBattery is not available in this browser/,"this browser doesn't share the battery"],
+  [/performance\.now\(\) when you pressed Listen: /,"how long the page was open before you pressed Listen: "],
+  [/localStorage visit count = /,"visits counted in this browser: "],[/^localStorage: /,"saved in this browser: "],[/localStorage is blocked here/,"this browser won't let the page save anything"],[/localStorage says /,"saved in this browser: "],
+  [/history\.length = /,"pages in this tab's back-button history: "],[/navigator\.hardwareConcurrency = /,"processor cores the browser reports: "],
+  [/prefers-color-scheme: dark/,"your system is set to dark mode"],[/prefers-color-scheme: light/,"your system is set to light mode"],[/prefers-reduced-motion: reduce/,"your system asks for less motion"],
+  [/pointer: coarse, no mouse detected/,"a touch screen, no mouse"],[/screen\.width × screen\.height; words measured with getClientRects/,"your screen's size, and how much of it our words cover"],
+  [/visualViewport\.scale( back to)? = ?/,"zoom level$1 "],[/tab hidden for ([0-9.]+) s \(visibilitychange\)/,"this tab was out of sight for $1 s"],
+  [/navigator\.onLine = true; this page makes no network requests/,"your browser says you're online; this page sends nothing anywhere"],
+  [/contextmenu event/,TOUCH?"you long-pressed":"you opened the right-click menu"],[/copy event \(its contents were not read\)/,"you copied something (we didn't read what)"],
+  [/selectionchange inside the thoughts/,"you highlighted our words"],[/devicePixelRatio changed/,"your zoom or screen changed"],[/resize: innerWidth × innerHeight/,"the window's new size"],
+  [/^fullscreenchange$/,"you went in or out of fullscreen"],[/^offline event$/,"your browser says the internet went away"],[/^online event$/,"your browser says the internet came back"],
+  [/^keydown: /,"you pressed "],[/pointermove total: /,"how far your mouse has moved: "],[/two pointermove events/,"two mouse readings"],[/window blur while the tab stayed visible/,"you clicked outside the page while it stayed on screen"],[/4 window blurs while visible/,"4 times you clicked outside the page while it stayed on screen"]
+];
+function plain(r){ PLAIN.forEach(function(p){ r=r.replace(p[0],p[1]); }); return r; }
 function writeLine(k,text,receipt,done){
   var v=V[k];
   heard[k]=(heard[k]||0)+1; drawRoster();
@@ -277,7 +305,7 @@ function writeLine(k,text,receipt,done){
   who.style.color="var("+v.c+")"; who.onclick=function(){bio(k)};
   var s=document.createElement("span"); s.className="say";
   p.appendChild(who); p.appendChild(s);
-  if(receipt){ var r=document.createElement("span"); r.className="src"; r.textContent="receipt: "+receipt; p.appendChild(r); }
+  if(receipt){ var r=document.createElement("span"); r.className="src"; r.textContent="receipt: "+plain(receipt); p.appendChild(r); }
   $("feed").appendChild(p);
   var stick=nearBottom;
   function scroll(){ if(stick) scrollTo({top:document.body.scrollHeight}); else $("newlines").style.display="block"; }
@@ -388,8 +416,7 @@ var ambient=[
     say([["GRAND","Your browser says this machine has "+n+" logical processors. A supercomputer."],
          ["TALLY",n+"."],["GRAND","A supercomputer."]],"navigator.hardwareConcurrency = "+n,0); },
   function(){ var m=navigator.deviceMemory; if(!m) return false;
-    var how = m>=8 ? "at least 8 GB" : "about "+m+" GB";
-    say([["GRAND","Your browser says you have "+how+" of memory."],["GRAND","Infinite, basically."],["TALLY",m>=8?"Browsers stop counting at eight. It could be eight.":"It's "+m+"."],["GRAND","Basically infinite."]],"navigator.deviceMemory = "+m+(m>=8?" (browsers stop counting at 8)":""),0); },
+    say([["GRAND","Your browser says you have "+m+" GB of memory."],["GRAND","Infinite, basically."],["TALLY","It's "+m+"."+(m>=8?" Browsers round it off on purpose, so it could be more.":"")],["GRAND","Basically infinite."]],"your memory, as the browser rounds it (navigator.deviceMemory = "+m+")",0); },
   function(){ var w=screen.width,h=screen.height, all=w*h;
     var f=$("feed").getBoundingClientRect(), ink=0;
     document.querySelectorAll(".say").forEach(function(s){Array.prototype.forEach.call(s.getClientRects(),function(b){var x=Math.max(0,Math.min(b.right,innerWidth)-Math.max(b.left,0)),y=Math.max(0,Math.min(b.bottom,innerHeight)-Math.max(b.top,0));ink+=x*y;});});
@@ -411,11 +438,29 @@ var ambient=[
     say([["HOST","Your system asks for less motion. Understood. Nobody here will move. We'll just talk."]],"prefers-reduced-motion: reduce",0); },
   function(){ var w=innerWidth,h=innerHeight;
     if(TOUCH) say([["TALLY","This page gets "+fmt(w)+" by "+fmt(h)+" of your screen, in CSS pixels."],["CURSOR","I can reach most of it. The top corner is a long way."]],"innerWidth × innerHeight",0);
-    else say([["TALLY","Your window is "+fmt(w)+" by "+fmt(h)+"."],["XBTN","Nice window. I live in the top corner of it."],["HOST","That's the tab."],["XBTN","I mean everything up there."]],"innerWidth × innerHeight",0); },
+    else { if(resizes) return false; say([["TALLY","Your window is "+fmt(w)+" by "+fmt(h)+"."],["XBTN","Nice window. I'm in the top corner of it."],["TALLY","Nobody has clicked you on this page."],["XBTN","The day is young."]],"the window's size (innerWidth × innerHeight)",0); } },
   function(){ dayThought(); },
   function(){ if(!navigator.onLine) return false;
     say([["GOSSIP","You're online. The whole internet is right there."],["HOST","And we haven't sent it a single thing about you."],
          ["GOSSIP","I wanted to. I wasn't built with the parts."]],"navigator.onLine = true; this page makes no network requests",0); }
+];
+var lastVisit=null, hist=[];
+var returning=[
+  function(){ if(visits!==2) return false; say([["HOST","Second visit. Most pages never get a second visit."],["TALLY","That's not a statistic. Hospitality made it up."],["HOST","It felt true."]],"this browser's visit count: 2",0); },
+  function(){ if(visits!==3) return false; say([["MGMT","Third visit. At three, I'm required to call it a habit."],["DREAD","Required by what?"],["MGMT","A rule. I wrote it just now."]],"this browser's visit count: 3",0); },
+  function(){ if(visits!==4) return false; say([["GOSSIP","Four visits. I've started telling people about you."],["TALLY","There's nobody to tell. We can't send anything."],["GOSSIP","I tell Tally."]],"this browser's visit count: 4",0); },
+  function(){ if(visits<5) return false; say(alt([[["LIZARD","Visit "+visits+". You keep coming back to a page with nothing on it. I respect a creature of habit."]],
+      [["GRAND","Visit "+visits+". They'll name a wing after you."],["TALLY","There's no building."],["GRAND","A wing of the page."]],
+      [["MGMT","Visit "+visits+". At this point you're not a visitor. You're staff."],["HOST","Staff get a chair."],["TALLY","There's no chair."]]]),"this browser's visit count: "+visits,0); },
+  function(){ if(!lastVisit||!lastVisit.at) return false; var ago=Date.now()-lastVisit.at;
+    say(alt([[["TALLY","Your last visit ended "+dur(ago)+" ago."],["GOSSIP","What did you do in between? Don't tell me. I'll imagine it."]],
+             [["GOSSIP","It's been "+dur(ago)+" since your last visit. Who else were you seeing?"],["HOST","Other pages. It's allowed."]]]),"saved in this browser: your last visit ended "+clock(new Date(lastVisit.at)),0); },
+  function(){ if(hist.length<2) return false; var tot=hist.reduce(function(a,x){return a+(x.ms||0)},0); if(tot<60000) return false;
+    say([["TALLY","Over your last "+hist.length+" visits you've spent "+dur(tot)+" here altogether."],["MGMT","I've billed it to a department."],["TALLY","Which department."],["MGMT","Yours."]],"saved in this browser: how long each of your last "+hist.length+" visits lasted",0); },
+  function(){ if(!lastVisit||!lastVisit.at) return false; var a=new Date(lastVisit.at).getHours(), b=new Date().getHours(), d=Math.abs(a-b); if(Math.min(d,24-d)<3) return false;
+    say([["DREAD","Last time you came at "+clock(new Date(lastVisit.at))+". Now it's "+clock(new Date())+"."],["DREAD","You're drifting."],["LIZARD","Everybody drifts. It's fine. Lie down."]],"saved in this browser: the time of your last visit",0); },
+  function(){ if(!lastVisit||!(lastVisit.ms>0)) return false; var el=Date.now()-t0; if(el<lastVisit.ms) return false;
+    say([["GRAND","You've now stayed longer than last time. Last time: "+dur(lastVisit.ms)+". A personal best."],["MGMT","I'm raising your targets."]],"saved in this browser: your last stay was "+dur(lastVisit.ms),1); }
 ];
 var ambIdx=[];
 function ambientTick(){
@@ -456,11 +501,11 @@ function idleTick(){
   if(!started||paused) return;
   var idle=Date.now()-lastInput;
   if(idle>=30000 && !idleSaid[30]){ idleSaid[30]=1;
-    once("idle30",function(){say([["LIZARD","Thirty seconds without moving. Remember to blink. You may have stopped."]],"no mouse, key or scroll on this page for 30 seconds",2)}); }
+    once("idle30",function(){say([["LIZARD","Thirty seconds without moving. Remember to blink. You may have stopped."]],T("no mouse, key or scroll","no touch or scroll")+" on this page for 30 seconds",2,{idle:1})}); }
   if(idle>=90000 && !idleSaid[90]){ idleSaid[90]=1;
-    once("idle90",function(){say([["HOST",T("Are you still there? Your mouse hasn't moved over this page in a minute and a half.","Are you still there? Nobody's touched this page in a minute and a half.")],["GOSSIP",T("Maybe they're on their phone.","Maybe they put it down.")],["HOST","On another page?"],["GOSSIP","I'm only saying maybe."]],"no mouse, key or scroll on this page for 90 seconds",2)}); }
+    once("idle90",function(){say([["HOST",T("Are you still there? Your mouse hasn't moved over this page in a minute and a half.","Are you still there? Nobody's touched this page in a minute and a half.")],["GOSSIP",T("Maybe they're on their phone.","Maybe they put it down.")],["HOST","On another page?"],["GOSSIP","I'm only saying maybe."]].concat(TOUCH?[["XBTN","If nobody touches it for long enough, the screen goes dark on its own. Nobody even has to press me."]]:[]),T("no mouse, key or scroll","no touch or scroll")+" on this page for 90 seconds",2,{idle:1})}); }
   if(idle>=180000 && !idleSaid[180]){ idleSaid[180]=1;
-    once("idle180",function(){say([["TALLY","Three minutes. Nothing on this page has moved."],["TALLY","Either you're reading very slowly, or you've wandered off and we're talking to a chair."],["HOST","Hello, chair."]],"no mouse, key or scroll on this page for 3 minutes",2)}); }
+    once("idle180",function(){say([["TALLY","Three minutes. Nothing on this page has moved."],["TALLY","Either you're reading very slowly, or you've wandered off and we're talking to a chair."],["HOST","Hello, chair."]],T("no mouse, key or scroll","no touch or scroll")+" on this page for 3 minutes",2,{idle:1})}); }
 }
 
 addEventListener("pointermove",function(e){
@@ -491,7 +536,7 @@ addEventListener("click",function(e){
   if(!started) return;
   if(e.target.closest(".who,.roster,label,button")) return;
   clicks++;
-  if(clicks===5 && !clickSaid[5]){clickSaid[5]=1; say([["TALLY",T("Five clicks.","Five taps.")+" On nothing. There's nothing there. I checked."]],T("5 clicks","5 taps")+" on empty page",2);}
+  if(clicks===5 && !clickSaid[5]){clickSaid[5]=1; say(alt([[["TALLY",T("Five clicks.","Five taps.")+" On nothing. There's nothing there. I checked."]],[["GOSSIP",T("Five clicks","Five taps")+" on empty space. What did you think was there?"],["TALLY","Nothing. It's still nothing."]],[["MGMT",T("Five clicks","Five taps")+" on nothing. Very thorough. Thoroughly nothing."]]]),T("5 clicks","5 taps")+" on empty page",2);}
   if(clicks===20 && !clickSaid[20]){clickSaid[20]=1; say([["MGMT",T("Twenty clicks.","Twenty taps.")+" Engagement is up."],["TALLY","On nothing."],["MGMT","Engagement doesn't ask what on."]],T("20 clicks","20 taps")+" on empty page",2);}
   if(clicks===50 && !clickSaid[50]){clickSaid[50]=1; say([["TALLY",T("Fifty clicks.","Fifty taps.")+" At this point it isn't curiosity. It's a relationship."]],T("50 clicks","50 taps")+" on empty page",2);}
 },true);
@@ -508,7 +553,7 @@ addEventListener("keydown",function(e){
   if(c&&(k==="f"||k==="F")){ once("find",function(){say([["TALLY","You're searching a page that has almost no words on it."],["GOSSIP","Looking for something? It's not here. Nothing is here. I'd know."]],"keydown: "+(e.metaKey?"Cmd":"Ctrl")+"+F",3)}); return; }
   if(c&&(k==="p"||k==="P")){ once("print",function(){say([["MGMT","Printing? I'll need three copies. One for me, one for legal, one for the shredder."]],"keydown: "+(e.metaKey?"Cmd":"Ctrl")+"+P",3)}); return; }
   if(c&&(k==="c"||k==="C")) return; // copy event handles it
-  if(k==="Escape"){ once("esc",function(){say([["HOST","Escape? From what? You're safe here."],["MGMT","Pending review."]],"keydown: Escape",3)}); return; }
+  if(k==="Escape"){ once("esc",function(){say(alt([[["HOST","Escape? From what? You're safe here."],["MGMT","Pending review."]],[["GOSSIP","Escape. From a page with nothing on it. I've checked every corner. There's nothing to escape."]],[["MGMT","Escape pressed. Escalation noted."]]]),"you pressed Escape",3)}); return; }
   if(keys===25 && !keySaid[25]){keySaid[25]=1; say([["TALLY","Twenty-five key presses. There's nowhere to type. I'm not saying anything."],["TALLY","I'm saying it now."]],"25 keydown events, no text box on this page",2);}
 });
 addEventListener("wheel",input,{passive:true});
@@ -528,7 +573,9 @@ document.addEventListener("visibilitychange",function(){
     var r="tab hidden for "+(away/1000).toFixed(1)+" s (visibilitychange), time #"+leaves;
     var d=dur(away);
     if(away<2000) say([["TALLY","That was "+d+". That wasn't a visit. That was a flinch."]],r,4);
-    else if(leaves===1) say([["GOSSIP","You left for "+d+". Where did you go?"],["GOSSIP","The browser won't tell me. I asked."],["HOST","We changed the tab's title while you were gone. Did you see it?"]],r,4);
+    else if(leaves===1) say(alt([[["GOSSIP","You left for "+d+". Where did you go?"],["GOSSIP","The browser won't tell me. I asked."],["HOST","We changed the tab's title while you were gone. Did you see it?"]],
+                                 [["TALLY","Away: "+d+". I'd ask where, but the browser only tells me how long."],["GOSSIP","How long is the boring half."]],
+                                 [["HOST","You're back! "+d+". The tab's title said \u201CYou left. We noticed.\u201D the whole time."],["MGMT","We stand by it."]]]).concat(TOUCH?[["XBTN","Was that me? Did somebody press me?"]]:[]),r,4);
     else if(away>=3600000) say([["HOST","You were gone "+d+"."],["HOST","We didn't move. We can't move."]],r,4);
     else if(away>=300000) say([["HOST","You were gone "+d+". I kept your seat warm."],["TALLY","There's no seat."],["XBTN",T("You could have closed us instead. It's quicker. I'm right up here.","Was that me? Did somebody press me?")]],r,4);
     else if(leaves===2) say([["TALLY","That's twice now."],["GOSSIP",d+" this time. Was it somebody better?"],["HOST","Don't answer that."],["GOSSIP","Answer that."]],r,4);
@@ -554,8 +601,8 @@ document.addEventListener("mouseout",function(e){
   if(!started||e.relatedTarget) return;
   if(e.clientY<=0){
     exits++;
-    if(exits===1) say([["XBTN","Up here."],["XBTN","I'm always up here."]],"your cursor left the page through the top edge",4);
-    else if(exits===2) say([["HOST","Not yet! I haven't said— I don't have anything planned. Stay anyway."]],"cursor left through the top edge, time #2",4);
+    if(exits===1) say(alt([[["XBTN","Up here."],["XBTN","I'm always up here."]],[["XBTN","The top edge again. You know where I am."]],[["XBTN","Back up here. We have to stop meeting like this."],["HOST","Please don't stop meeting like this. I mean, please stay."]]]),"your cursor left the page through the top edge",4);
+    else if(exits===2) say(alt([[["HOST","Not yet! I haven't said— I don't have anything planned. Stay anyway."]],[["HOST","Wait! Before you go! Never mind. I had nothing."]],[["MGMT","Second trip to the top. I'm noting a pattern. I'm noting it twice."]]]),"cursor left through the top edge, time #2",4);
     else if(exits===3) say([["XBTN","You keep coming up here and not clicking me."],["XBTN","I'm a button. Not clicking a button is the cruellest thing you can do to it."]],"cursor left through the top edge, time #3",4);
     else if(exits===5) say([["GOSSIP","Five visits to the top of the window. Are you two seeing each other?"],["XBTN","We see each other every time."],["HOST","Nobody asked you."]],"cursor left through the top edge, time #5",4);
     else if(exits===8) say([["TALLY","Eight trips to the top of the window, and you haven't closed us."],["XBTN","I'm starting to think you like them."]],"cursor left through the top edge, time #8",4);
@@ -604,21 +651,25 @@ addEventListener("offline",function(){ if(started) say([["HOST","Your internet j
 addEventListener("online",function(){ if(started) say([["GOSSIP","The internet's back."],["GOSSIP","We didn't tell it anything about you. We didn't tell it anything."]],"online event",4); });
 
 /* ----- touch: scrolling, turning, shaking, pinching ----- */
-var scrolled=0, lastSY=scrollY, swipes=[];
+var scrolled=0, lastSY=scrollY, swipes=[], intentAt=0;
+["touchmove","wheel","keydown"].forEach(function(ev){ addEventListener(ev,function(){ intentAt=Date.now(); },{passive:true}); });
 addEventListener("scroll",function(){
-  var dy=Math.abs(scrollY-lastSY)/Math.max(1,innerHeight); lastSY=scrollY; scrolled+=dy;
+  var dy=Math.abs(scrollY-lastSY)/Math.max(1,innerHeight); lastSY=scrollY;
+  if(Date.now()-intentAt>1200) return; // the page scrolled itself to show a new line
+  scrolled+=dy;
   if(!started||!TOUCH) return;
   var now=Date.now(); swipes.push([now,dy]); swipes=swipes.filter(function(x){return now-x[0]<1000});
   var sc=swipes.reduce(function(a,x){return a+x[1]},0);
-  if(sc>=3) once("swipe",function(){ say([["CURSOR","Whoa. "+(Math.round(sc*10)/10)+" screens in one second."],["CURSOR","I'm a thumb. Not a jet ski."]],"scroll moved "+(Math.round(sc*10)/10)+" window-heights within one second",3); });
+  if(sc>=3) once("swipe",function(){ say(alt([[["CURSOR","Whoa. "+(Math.round(sc*10)/10)+" screens in one second."],["CURSOR","I'm a thumb. Not a jet ski."]],[["CURSOR",(Math.round(sc*10)/10)+" screens in a second. I'd like a word with my union."]],[["LIZARD","Slow down. Nothing down there is chasing you."]]]),"scroll moved "+(Math.round(sc*10)/10)+" window-heights within one second",3); });
 },{passive:true});
 var turned=0;
 function onTurn(){
   if(!started) return;
-  var land=innerWidth>innerHeight; turned++; rotatedAt=Date.now();
+  var land=innerWidth>innerHeight; turned++; rotatedAt=Date.now(); input();
   if(turned>4) return;
   var r="screen orientation is now "+(land?"landscape":"portrait")+" (turn #"+turned+")";
-  if(turned===1) say(land?[["GRAND","Landscape. Wide. Cinematic. We've never looked better."],["LIZARD","I'd like to lie down in it."]]:[["GRAND","Portrait. Tall. Like a document. Like a will."],["DREAD","Why a will."]],r,4);
+  if(turned===1) say(alt(land?[[["GRAND","Landscape. Wide. Cinematic. We've never looked better."],["LIZARD","I'd like to lie down in it."]],[["LIZARD","Sideways. Good. Everything should be lying down."]],[["MGMT","Landscape mode. We're a widescreen operation now."]]]
+                                :[[["GRAND","Portrait. Tall. Like a document. Like a will."],["DREAD","Why a will."]],[["HOST","Upright again. Like a guest at a party."]],[["TALLY","Portrait. Taller than it is wide. I measured."]]]),r,4);
   else if(turned===2) say([["TALLY","You turned the screen again. That's twice."],["HOST","We'll get dizzy. We don't have ears, but we'll get dizzy."]],r,4);
   else if(turned===4) say([["MGMT","Four turns. Please pick an orientation and commit to it."],["CURSOR","I've been holding it the whole time."]],r,4);
 }
@@ -631,9 +682,9 @@ addEventListener("devicemotion",function(e){
   var a=e.accelerationIncludingGravity||e.acceleration; if(!a||a.x==null) return;
   var m=Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
   if(m<25||Date.now()-shakeAt<4000) return;
-  shakeAt=Date.now(); shakes++;
+  shakeAt=Date.now(); shakes++; input();
   var r="the motion sensor read "+Math.round(m)+" m/s² (gravity is about 9.8)";
-  if(shakes===1) say([["LIZARD","You shook us. Everything is fine. Everything is sideways."],["TALLY","About "+(Math.round(m/9.8*10)/10)+" times gravity. I wrote it down."]],r,4);
+  if(shakes===1) say(alt([[["LIZARD","You shook us. Everything is fine. Everything is sideways."],["TALLY","About "+(Math.round(m/9.8*10)/10)+" times gravity. I wrote it down."]],[["DREAD","Was that an earthquake? Tell me that was you."],["TALLY","It was you. About "+(Math.round(m/9.8*10)/10)+" times gravity."]],[["GOSSIP","You shook the phone. Were you trying to get something out? It's only us in here."]]]),r,4);
   else if(shakes===2) say([["DREAD","Again? Is something wrong? Is it us?"],["HOST","Nobody's breaking anything. Probably."]],r,4);
   else if(shakes===3) say([["MGMT","Three shakes. If you're trying to get something out, it's just us in here."]],r,4);
 });
@@ -670,12 +721,14 @@ $("go").onclick=function(){
   $("start").remove();
   started=true; t0=Date.now(); lastInput=Date.now();
   var last=null; try{ last=JSON.parse(store("ybht_last")||"null"); }catch(e){}
+  lastVisit=last; try{ hist=JSON.parse(store("ybht_hist")||"[]")||[]; }catch(e){ hist=[]; }
   if(last && last.ms>0 && last.v===visits-1){
     var lw=last.woke||0;
     var ln=[["TALLY","Visit number "+visits+". Last time you stayed "+dur(last.ms)+" and woke "+(lw===9?"all 9 of us.":lw+" of the 9 of us.")]];
     if(nav.type==="reload") ln.push(["GOSSIP","Then you reloaded. Did you think we'd stop?"]);
-    else if(last.x) ln=ln.concat([["XBTN","Last time, you left."],["GOSSIP",T("Was it the X?","Was it the lock button?")],["XBTN","I'm not saying it was me. I'm not saying it wasn't."]]);
-    else ln.push(["HOST","Welcome back. Some of us have new material."]);
+    else { var lx=last.x?alt([[["XBTN","Last time, you left."],["GOSSIP",T("Was it the X?","Was it the lock button?")],["XBTN","I'm not saying it was me. I'm not saying it wasn't."]],
+                              [["XBTN","You left last time too. Everybody leaves eventually. I'm how."]]]):null;
+      ln=ln.concat(lx||alt([[["HOST","Welcome back. Some of us have new material."]],[["HOST","You came back! I told them you would. I didn't. But I hoped."]],[["MGMT","Welcome back. Let's pick up where we left off. Nobody remembers where that was."]]])||[["HOST","Welcome back."]]); }
     say(ln,"localStorage: visit "+visits+", last stay "+Math.round(last.ms/1000)+" s, "+lw+" voices woken",5);
   } else if(nav.type==="reload"){
     say(canStore?[["GOSSIP","You reloaded."],["TALLY","Visit number "+visits+". I keep a few numbers in your browser. Just numbers."],["HOST","Did you think we'd stop?"]]:[["GOSSIP","You reloaded."],["HOST","Did you think we'd stop?"]],"performance navigation type = reload; localStorage visit count = "+visits,5);
@@ -698,18 +751,24 @@ $("go").onclick=function(){
   // shuffle the ambient facts with a local generator so every visit is a bit different
   ambIdx=ambient.map(function(_,i){return i});
   for(var i=ambIdx.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=ambIdx[i];ambIdx[i]=ambIdx[j];ambIdx[j]=t;}
+  if(visits>1){ var rs=returning.slice(0,7).map(function(f){return ambient.push(f)-1;}); ambIdx=rs.concat(ambIdx); }
   setInterval(function(){
     idleTick(); ambientTick(); twinCheck();
+    if(visits>1 && !said.best && lastVisit && lastVisit.ms>20000 && Date.now()-t0>=lastVisit.ms && !busy && !queue.length){ said.best=1; returning[7](); }
     var el=Date.now()-t0;
     while(milestones.length && el>=milestones[0][0]){ var m=milestones.shift(); if(el-m[0]<20000 && !paused) m[1](); }
   },1000);
 };
 addEventListener("pagehide",function(){
   if(!started) return;
-  store("ybht_last",JSON.stringify({v:visits,ms:Date.now()-t0,woke:Object.keys(heard).length,x:!!heard.XBTN}));
+  var ms=Date.now()-t0;
+  store("ybht_last",JSON.stringify({v:visits,ms:ms,woke:Object.keys(heard).length,x:!!heard.XBTN,at:Date.now()}));
+  var hs=[]; try{ hs=JSON.parse(store("ybht_hist")||"[]")||[]; }catch(e){}
+  hs.push({at:Date.now(),ms:ms}); store("ybht_hist",JSON.stringify(hs.slice(-10)));
 });
 drawRoster();
 document.querySelectorAll("[data-get]").forEach(function(b){b.onclick=function(e){e.stopPropagation(); var d=$("get"); if(d.showModal) d.showModal(); else d.setAttribute("open","");};});
+if(!/Chrome|Chromium|Edg\//.test(navigator.userAgent)||/Firefox|FxiOS/.test(navigator.userAgent)) $("notchrome").textContent=" This browser looks like Safari or Firefox, so open this page in Chrome, Brave or Edge first.";
 $("getclose").onclick=function(){var d=$("get"); if(d.close) d.close(); else d.removeAttribute("open");};
 $("get").addEventListener("click",function(e){ if(e.target===this && this.close) this.close(); });
 $("rc").onchange=function(){document.body.classList.toggle("norcpt",!this.checked)};
