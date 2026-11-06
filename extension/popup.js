@@ -32,7 +32,7 @@ $("now").onclick = function () {
   });
 };
 $("clear").onclick = function () { chrome.storage.local.set({ room: [] }); $("status").textContent = "Chat history cleared."; };
-$("forget").onclick = function () { chrome.storage.local.remove(["leaves", "trail", "history", "records", "topics", "work", "closed", "advice", "patAt"]); $("status").textContent = "Forgotten: habits, history and today's trail. The chat itself is still there."; };
+$("forget").onclick = function () { chrome.storage.local.remove(["leaves", "trail", "history", "records", "topics", "work", "closed", "advice", "patAt", "seen", "focusLog"]); $("status").textContent = "Forgotten: habits, history and today's trail. The chat itself is still there."; };
 // hide or show the chat on the site you're on (the button says which)
 var curHost = null;
 function showHush(st) {

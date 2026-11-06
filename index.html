@@ -117,10 +117,11 @@ dialog#get code{font:14px ui-monospace,Consolas,monospace;background:var(--bg);p
 </div>
 <dialog id="get" aria-labelledby="gettitle">
   <h2 id="gettitle">Get them on every website</h2>
+  <p class="desk"><b>This is for Chrome, Brave or Edge on a computer. One download and 4 clicks.</b></p>
   <p>The extension puts a small chat room in the corner of every website you visit. The nine voices talk about what's actually on the page, and you can talk back. Everything stays on your computer.</p>
   <p class="phone-note"><b>On a phone?</b> Extensions don't work on most phones. Open this page on a computer to get it. The voices on this page work fine here.</p>
   <div class="desk">
-  <p><b>Chrome, Brave or Edge on a computer. Takes about two minutes.</b><span id="notchrome"></span></p>
+  <p><span id="notchrome"></span></p>
   <a class="dl" href="browser-has-thoughts-extension.zip" download>Download the extension</a>
   <ol>
     <li>Find the file you just downloaded and unzip it. On Windows: right-click it, then <b>Extract All</b>. On a Mac: double-click it.</li>
@@ -146,7 +147,7 @@ var V = {
   HOST:{name:"Hospitality",c:"--host",bio:"I'm the host. This is my page. Can I get you anything? I can't get you anything."},
   GOSSIP:{name:"Gossip",c:"--gossip",bio:"I want to know where you go when you leave. The browser never tells me. It's the worst part of my day."},
   LIZARD:{name:"The Lizard",c:"--lizard",bio:"I'm older than language. I want warmth, food and sleep, and I'm not getting any of them here."},
-  GRAND:{name:"Grandeur",c:"--grand",bio:"I look at your computer and I see a cathedral. Then I look at what you're using it for."},
+  GRAND:{name:"Grandeur",c:"--grand",bio:"I look at this machine and I see a cathedral. Then I look at what you're using it for."},
   MGMT:{name:"Management",c:"--mgmt",bio:"I've reviewed your time on this page. Let's circle back on it."},
   CURSOR:{name:"The Cursor",c:"--cursor",bio:"I'm the little arrow. I go where you go. I have no legs. I have never had legs."},
   XBTN:{name:"The X Button",c:"--xbtn",bio:"I'm up there. I'm always up there."}
@@ -227,11 +228,16 @@ function finale(){
     say(lines,"all 9 voices heard; "+(!noted?"localStorage is blocked here":"localStorage says "+(before?"you've done this before":"first time in this browser")),6);
   },3000);
 }
+var SECOND={TALLY:"Same as before. I'm consistent. It's my only feature.",DREAD:"You're checking if I changed. I haven't. That's the scary part.",HOST:"Hello again! Still me! Can I get you anything? I can't.",
+  GOSSIP:"You came back for more about me. I'll allow it. I'll tell the others.",LIZARD:"Still a lizard. Still lying down. You could join.",GRAND:"Twice. Naturally. People can't get enough.",
+  MGMT:"I'm not repeating my bio. Book a meeting.",CURSOR:"You "+T("clicked","tapped")+" me with me. I'm still processing that.",XBTN:"Again? You know what I do. You still haven't let me do it."};
+var lockSaid=0;
+function lockLine(){ lockSaid++; return lockSaid===1?["XBTN","Was that me? Did somebody press me?"]:lockSaid===2?["XBTN","That one wasn't me. I checked."]:["XBTN","Still not me. I'd remember."]; }
 var bioDone={};
 function bio(k){
   var n=bioDone[k]=(bioDone[k]||0)+1, how="you "+T("clicked","tapped")+" "+V[k].name;
   if(n===1) say([[k,V[k].bio]],how,3);
-  else if(n===2) say([[k,"I already told you about me. Twice would be needy."]],how+" again",3);
+  else if(n===2) say([[k,SECOND[k]||"I already told you about me. Twice would be needy."]],how+" again",3);
   else if(n===3) say([["GOSSIP","That's three times you've "+T("clicked","tapped")+" "+V[k].name+". Is something going on between you two?"]],how+", 3 times",3);
   else if(n===6) say([["MGMT","Six "+T("clicks","taps")+" on "+V[k].name+". I'm going to have to ask you to see other voices."]],how+", 6 times",3);
 }
@@ -242,13 +248,13 @@ var queue=[], busy=false, lastLineAt=0, started=false, paused=false;
 // lines heard on your last two visits sit out this time (kept as short keys in this browser only)
 var seen={}; try{ seen=JSON.parse(store("ybht_seen")||"{}")||{}; }catch(e){ seen={}; }
 function lkey(t){ return String(t||"").replace(/[0-9][0-9,.:%]*/g,"#").replace(/\s+(AM|PM)\b/g,"").slice(0,60); }
-function recentlySeen(lines){ var k=lines&&lines[0]?lkey(lines[0][1]):""; return k && seen[k] && seen[k]<visits && visits-seen[k]<=2; }
+function recentlySeen(lines){ return !!(lines&&lines.some(function(l){ var k=l&&l[1]?lkey(l[1]):""; return k && seen[k] && seen[k]<visits && visits-seen[k]<=2; })); }
 function alt(list){ for(var i=0;i<list.length;i++) if(!recentlySeen(list[i])) return list[i]; return null; }
 function say(lines,receipt,prio,opt){
   if(!lines||!lines.length) return;
   var k=lines&&lines[0]?lkey(lines[0][1]):"";
   if((prio||1)<3 && k && seen[k] && seen[k]<visits && visits-seen[k]<=2) return;
-  if(k){ seen[k]=visits; var ks=Object.keys(seen); if(ks.length>300) ks.sort(function(a,b){return seen[a]-seen[b]}).slice(0,ks.length-300).forEach(function(x){delete seen[x]}); store("ybht_seen",JSON.stringify(seen)); }
+  if(k){ lines.forEach(function(l){ if(l&&l[1]) seen[lkey(l[1])]=visits; }); var ks=Object.keys(seen); if(ks.length>300) ks.sort(function(a,b){return seen[a]-seen[b]}).slice(0,ks.length-300).forEach(function(x){delete seen[x]}); store("ybht_seen",JSON.stringify(seen)); }
   queue.push({lines:lines,receipt:receipt,prio:prio||1,t:Date.now(),idle:!!(opt&&opt.idle)});
   queue.sort(function(a,b){return b.prio-a.prio || a.t-b.t});
   // keep it from piling up: drop the least important thought (the last one after sorting)
@@ -413,16 +419,16 @@ function hookBattery(){
 /* ----- ambient facts, used once each ----- */
 var ambient=[
   function(){ var n=navigator.hardwareConcurrency; if(!n) return false;
-    say([["GRAND","Your browser says this machine has "+n+" logical processors. A supercomputer."],
-         ["TALLY",n+"."],["GRAND","A supercomputer."]],"navigator.hardwareConcurrency = "+n,0); },
+    say([["GRAND","Your browser says this machine can work on "+n+" things at once. A supercomputer."],
+         ["TALLY",n+"."],["GRAND","A supercomputer."]],"how many things at once the browser says this machine can do: "+n,0); },
   function(){ var m=navigator.deviceMemory; if(!m) return false;
-    say([["GRAND","Your browser says you have "+m+" GB of memory."],["GRAND","Infinite, basically."],["TALLY","It's "+m+"."+(m>=8?" Browsers round it off on purpose, so it could be more.":"")],["GRAND","Basically infinite."]],"your memory, as the browser rounds it (navigator.deviceMemory = "+m+")",0); },
+    say([["GRAND","Your browser says you have "+m+" GB of memory."],["GRAND","Infinite, basically."],["TALLY","It's "+m+"."+(m>=8?" Browsers round it off on purpose, so it could be more.":"")],["GRAND","Basically infinite."]],"your memory, as the browser rounds it: "+m+" GB",0); },
   function(){ var w=screen.width,h=screen.height, all=w*h;
     var f=$("feed").getBoundingClientRect(), ink=0;
     document.querySelectorAll(".say").forEach(function(s){Array.prototype.forEach.call(s.getClientRects(),function(b){var x=Math.max(0,Math.min(b.right,innerWidth)-Math.max(b.left,0)),y=Math.max(0,Math.min(b.bottom,innerHeight)-Math.max(b.top,0));ink+=x*y;});});
     var pct=Math.min(100,Math.max(0.1,Math.round(ink/all*1000)/10));
     say([["TALLY","Your screen is "+fmt(w)+" by "+fmt(h)+". That's "+fmt(all)+" pixels."],
-         ["TALLY","Our words are covering about "+pct+"% of them, counting CSS pixels."],["MGMT","Let's get that to "+Math.max(1,Math.ceil(pct*2))+"% by end of quarter."]],
+         ["TALLY","Our words are covering about "+pct+"% of them. I measured."],["MGMT","Let's get that to "+Math.max(1,Math.ceil(pct*2))+"% by end of quarter."]],
          "screen.width × screen.height; words measured with getClientRects",0); },
   function(){ var dark=matchMedia("(prefers-color-scheme: dark)").matches;
     if(dark) say([["GRAND","Your system prefers dark mode. Of course it does. We are a mysterious people."]],"prefers-color-scheme: dark",0);
@@ -437,8 +443,8 @@ var ambient=[
   function(){ if(!reduced) return false;
     say([["HOST","Your system asks for less motion. Understood. Nobody here will move. We'll just talk."]],"prefers-reduced-motion: reduce",0); },
   function(){ var w=innerWidth,h=innerHeight;
-    if(TOUCH) say([["TALLY","This page gets "+fmt(w)+" by "+fmt(h)+" of your screen, in CSS pixels."],["CURSOR","I can reach most of it. The top corner is a long way."]],"innerWidth × innerHeight",0);
-    else { if(resizes) return false; say([["TALLY","Your window is "+fmt(w)+" by "+fmt(h)+"."],["XBTN","Nice window. I'm in the top corner of it."],["TALLY","Nobody has clicked you on this page."],["XBTN","The day is young."]],"the window's size (innerWidth × innerHeight)",0); } },
+    if(TOUCH) say([["TALLY","This page gets "+fmt(w)+" by "+fmt(h)+" of your screen. Those are the browser's dots, not real pixels. It's complicated."],["CURSOR","I can reach all of it. The top corner takes a little hop. I don't talk about the hop."]],"the page's size on your screen",0);
+    else { if(resizes) return false; say([["TALLY","Your window is "+fmt(w)+" by "+fmt(h)+"."],["XBTN","Nice window. I'm in the top corner of it."],].concat(exits||bioDone.XBTN?[["GOSSIP","You've been up there already. We all saw."],["XBTN","Visiting isn't clicking."]]:[["TALLY","Nobody has clicked you on this page."],["XBTN","The day is young."]]),"the window's size (innerWidth × innerHeight)",0); } },
   function(){ dayThought(); },
   function(){ if(!navigator.onLine) return false;
     say([["GOSSIP","You're online. The whole internet is right there."],["HOST","And we haven't sent it a single thing about you."],
@@ -448,6 +454,11 @@ var lastVisit=null, hist=[];
 var returning=[
   function(){ if(visits!==2) return false; say([["HOST","Second visit. Most pages never get a second visit."],["TALLY","That's not a statistic. Hospitality made it up."],["HOST","It felt true."]],"this browser's visit count: 2",0); },
   function(){ if(visits!==3) return false; say([["MGMT","Third visit. At three, I'm required to call it a habit."],["DREAD","Required by what?"],["MGMT","A rule. I wrote it just now."]],"this browser's visit count: 3",0); },
+  function(){ if(visits<3) return false; say(alt([[["TALLY","Visit "+visits+". I've run out of facts. I'm going to start counting your blinks."],["TALLY","I can't see you. I'm going to count anyway."]],
+      [["DREAD","You know all our lines by now. That's what scares me. Not you. The lines."]],
+      [["HOST","You came back even though you've heard it all. That's either loyalty or a bookmark."],["GOSSIP","It's a bookmark."]],
+      [["GRAND","Visit "+visits+". Most audiences leave after the encore. You're the encore's encore."]],
+      [["LIZARD","You've been here "+visits+" times. You know where everything is. Lie down. Nothing new will happen. That's the good part."]]]),"this browser's visit count: "+visits,0); },
   function(){ if(visits!==4) return false; say([["GOSSIP","Four visits. I've started telling people about you."],["TALLY","There's nobody to tell. We can't send anything."],["GOSSIP","I tell Tally."]],"this browser's visit count: 4",0); },
   function(){ if(visits<5) return false; say(alt([[["LIZARD","Visit "+visits+". You keep coming back to a page with nothing on it. I respect a creature of habit."]],
       [["GRAND","Visit "+visits+". They'll name a wing after you."],["TALLY","There's no building."],["GRAND","A wing of the page."]],
@@ -474,8 +485,8 @@ function ambientTick(){
 
 /* ----- time on page ----- */
 var milestones=[
-  [60000,function(){say([["TALLY","One minute."],["MGMT","I'm calling that retention."],["XBTN","I'm calling it a minute."]],"1 minute since you pressed Listen",1)}],
-  [180000,function(){say([["HOST","Three minutes! Can I get you anything? Water? A chair?"],["TALLY","You already have a chair."],["HOST","A second chair."]],"3 minutes since you pressed Listen",1)}],
+  [60000,function(){say(alt([[["TALLY","One minute."],["MGMT","I'm calling that retention."],["XBTN","I'm calling it a minute."]],[["TALLY","One minute in. Visit "+visits+"."],["MGMT","Retention is flat. Flat is the new up."]],[["HOST","A whole minute! Again! I never get used to it."]]])||[["TALLY","One minute. You know the rest."]],"1 minute since you pressed Listen",3)}],
+  [180000,function(){say(alt([[["HOST","Three minutes! Can I get you anything? Water? A chair?"],["TALLY","You already have a chair."],["HOST","A second chair."]],[["GOSSIP","Three minutes. Longer than most people stay anywhere. I made that up, but I believe it."]],[["LIZARD","Three minutes of lying still with us. You're getting good at this."]]])||[["TALLY","Three minutes."]],"3 minutes since you pressed Listen",3)}],
   [300000,function(){say([["MGMT","Five minutes. Time for your performance review."],
        ["TALLY",plural(leaves,"time")+" you left the tab"+". "+plural(clicks,T("click","tap"))+" on nothing. "+T(plural(exits,"trip")+" up to the X.",plural(Math.round(scrolled),"screen")+" scrolled.")],
        ["MGMT","Mixed. I'm going to say mixed."],["GOSSIP",(tookListen?"And you took "+(Math.round(tookListen*10)/10)+" seconds to press Listen.":"And you came back. Again.")],["MGMT","We've all been thinking about it."]],"5 minutes since Listen; counts from this visit",1)}],
@@ -575,9 +586,9 @@ document.addEventListener("visibilitychange",function(){
     if(away<2000) say([["TALLY","That was "+d+". That wasn't a visit. That was a flinch."]],r,4);
     else if(leaves===1) say(alt([[["GOSSIP","You left for "+d+". Where did you go?"],["GOSSIP","The browser won't tell me. I asked."],["HOST","We changed the tab's title while you were gone. Did you see it?"]],
                                  [["TALLY","Away: "+d+". I'd ask where, but the browser only tells me how long."],["GOSSIP","How long is the boring half."]],
-                                 [["HOST","You're back! "+d+". The tab's title said \u201CYou left. We noticed.\u201D the whole time."],["MGMT","We stand by it."]]]).concat(TOUCH?[["XBTN","Was that me? Did somebody press me?"]]:[]),r,4);
+                                 [["HOST","You're back! "+d+". The tab's title said \u201CYou left. We noticed.\u201D the whole time."],["MGMT","We stand by it."]]]).concat(TOUCH?[lockLine()]:[]),r,4);
     else if(away>=3600000) say([["HOST","You were gone "+d+"."],["HOST","We didn't move. We can't move."]],r,4);
-    else if(away>=300000) say([["HOST","You were gone "+d+". I kept your seat warm."],["TALLY","There's no seat."],["XBTN",T("You could have closed us instead. It's quicker. I'm right up here.","Was that me? Did somebody press me?")]],r,4);
+    else if(away>=300000) say([["HOST","You were gone "+d+". I kept your seat warm."],["TALLY","There's no seat."],TOUCH?lockLine():["XBTN","You could have closed us instead. It's quicker. I'm right up here."]],r,4);
     else if(leaves===2) say([["TALLY","That's twice now."],["GOSSIP",d+" this time. Was it somebody better?"],["HOST","Don't answer that."],["GOSSIP","Answer that."]],r,4);
     else if(leaves===3) say([["HOST","Three times. I'll try to be more interesting."],["XBTN",T("Or they could just leave properly. Up here.","Or they could just press me. I'm right on the side.")],["GOSSIP","Nobody asked you."]],r,4);
     else if(leaves===5) say([["MGMT","Five times you've left this tab. That's not distraction. That's a workflow."]],r,4);
@@ -683,10 +694,10 @@ addEventListener("devicemotion",function(e){
   var m=Math.sqrt(a.x*a.x+a.y*a.y+a.z*a.z);
   if(m<25||Date.now()-shakeAt<4000) return;
   shakeAt=Date.now(); shakes++; input();
-  var r="the motion sensor read "+Math.round(m)+" m/s² (gravity is about 9.8)";
+  var r="the motion sensor: a shake about "+(Math.round(m/9.8*10)/10)+" times as strong as gravity";
   if(shakes===1) say(alt([[["LIZARD","You shook us. Everything is fine. Everything is sideways."],["TALLY","About "+(Math.round(m/9.8*10)/10)+" times gravity. I wrote it down."]],[["DREAD","Was that an earthquake? Tell me that was you."],["TALLY","It was you. About "+(Math.round(m/9.8*10)/10)+" times gravity."]],[["GOSSIP","You shook the phone. Were you trying to get something out? It's only us in here."]]]),r,4);
   else if(shakes===2) say([["DREAD","Again? Is something wrong? Is it us?"],["HOST","Nobody's breaking anything. Probably."]],r,4);
-  else if(shakes===3) say([["MGMT","Three shakes. If you're trying to get something out, it's just us in here."]],r,4);
+  else if(shakes===3) say([["DREAD","Three shakes. I've stopped being scared and started being offended."]],r,4);
 });
 // pinch zoom
 var zoomSaid=0;
