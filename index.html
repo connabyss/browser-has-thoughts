@@ -60,6 +60,22 @@ footer{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1p
 #go:hover{transform:translateY(-1px)}
 #go:focus-visible,.roster li:focus-visible{outline:3px solid var(--grand);outline-offset:3px}
 .newlines{position:fixed;right:20px;bottom:56px;font:700 13px/1 system-ui,sans-serif;background:var(--ink);color:var(--bg);border:0;padding:10px 14px;border-radius:2px;cursor:pointer;display:none}
+.getbtn{display:inline-block;margin-top:22px;font:700 13px/1.2 system-ui,sans-serif;letter-spacing:.06em;background:transparent;color:var(--ink);border:2px solid var(--ink);padding:10px 14px;border-radius:2px;cursor:pointer;text-align:left}
+.getbtn:hover{background:var(--ink);color:var(--bg)}
+#start .getbtn{display:block;margin:18px auto 0;border:0;text-decoration:underline;font-weight:400;letter-spacing:0;color:var(--soft);font-size:15px}
+#start .getbtn:hover{background:none;color:var(--ink)}
+dialog#get{max-width:560px;width:calc(100% - 32px);background:var(--card);color:var(--ink);border:2px solid var(--ink);border-radius:4px;padding:26px 26px 22px;font:16px/1.5 system-ui,sans-serif}
+dialog#get::backdrop{background:rgba(0,0,0,.55)}
+dialog#get h2{font:700 24px/1.2 Georgia,serif;margin:0 0 8px}
+dialog#get p{margin:0 0 14px;color:var(--soft)}
+dialog#get ol{margin:0 0 16px;padding-left:22px}
+dialog#get li{margin:0 0 10px}
+dialog#get code{font:14px ui-monospace,Consolas,monospace;background:var(--bg);padding:1px 6px;border-radius:3px;user-select:all}
+.dl{display:inline-block;font:700 16px/1 system-ui,sans-serif;background:var(--ink);color:var(--bg);text-decoration:none;padding:14px 22px;border-radius:2px;margin:4px 0 18px}
+.dlrow{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.close{font:600 14px system-ui,sans-serif;background:none;border:1px solid var(--rule);color:var(--ink);padding:8px 14px;border-radius:2px;cursor:pointer}
+.phone-note{display:none}
+@media (pointer:coarse) and (hover:none){.phone-note{display:block}}
 @media (max-width:760px){
   .wrap{grid-template-columns:1fr;gap:18px;padding-block:18px 110px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
   aside{order:2}
@@ -78,6 +94,7 @@ footer{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1p
     <h1>Your Browser Has Thoughts</h1>
     <p>Nine voices live in your browser. They can only talk about things your browser actually tells them. Nothing you do here leaves this page.</p>
     <button id="go">Listen</button>
+    <button class="getbtn" data-get>Or get them on every website (browser extension)</button>
   </div>
 </div>
 
@@ -91,9 +108,24 @@ footer{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1p
     <ul class="roster" id="roster"></ul>
     <div class="woke" id="woke">You have woken 0 of 9.</div>
     <label class="rcpt"><input type="checkbox" id="rc" checked> Show receipts</label>
+    <button class="getbtn" data-get>Get them on every website →</button>
   </aside>
   <main id="feed" aria-live="polite"></main>
 </div>
+<dialog id="get" aria-labelledby="gettitle">
+  <h2 id="gettitle">Get them on every website</h2>
+  <p>The extension puts a small chat room in the corner of every website you visit. The nine voices talk about what's actually on the page, and you can talk back. Everything stays on your computer.</p>
+  <p class="phone-note"><b>On a phone?</b> Extensions don't work on most phones. Open this page on a computer to get it. The voices on this page work fine here.</p>
+  <a class="dl" href="browser-has-thoughts-extension.zip" download>Download the extension</a>
+  <ol>
+    <li>Find the file you just downloaded and unzip it. On Windows: right-click it, then <b>Extract All</b>. On a Mac: double-click it.</li>
+    <li>Open a new tab and go to <code>chrome://extensions</code>. In Brave it's <code>brave://extensions</code>, in Edge it's <code>edge://extensions</code>.</li>
+    <li>Turn on <b>Developer mode</b> (a switch at the top right, or on the left in Edge).</li>
+    <li>Click <b>Load unpacked</b> and pick the unzipped folder, the one called <b>browser-has-thoughts-extension</b>.</li>
+  </ol>
+  <p>That's it. Open any website and the chat appears in the bottom corner. Press <b>quiet</b> to hush them for an hour, or remove the extension from the same page any time. Works in Chrome, Brave and Edge on a computer. Not Firefox or Safari yet.</p>
+  <div class="dlrow"><span></span><button class="close" id="getclose">Close</button></div>
+</dialog>
 <button class="newlines" id="newlines">New thoughts below ↓</button>
 <footer>Everything happens in your browser. Nothing is sent anywhere. Each thought comes with a receipt: what the browser actually said.</footer>
 
@@ -195,7 +227,13 @@ function bio(k){
 /* ---------- the queue: nothing ever goes by too fast ---------- */
 var queue=[], busy=false, lastLineAt=0, started=false, paused=false;
 // a "thought" is a list of [voice,text] lines plus one receipt shown under the first line
+// lines heard on your last two visits sit out this time (kept as short keys in this browser only)
+var seen={}; try{ seen=JSON.parse(store("ybht_seen")||"{}")||{}; }catch(e){ seen={}; }
+function lkey(t){ return String(t||"").replace(/[0-9][0-9,.:%]*/g,"#").replace(/\s+(AM|PM)\b/g,"").slice(0,60); }
 function say(lines,receipt,prio){
+  var k=lines&&lines[0]?lkey(lines[0][1]):"";
+  if((prio||1)<3 && k && seen[k] && seen[k]<visits && visits-seen[k]<=2) return;
+  if(k){ seen[k]=visits; var ks=Object.keys(seen); if(ks.length>300) ks.sort(function(a,b){return seen[a]-seen[b]}).slice(0,ks.length-300).forEach(function(x){delete seen[x]}); store("ybht_seen",JSON.stringify(seen)); }
   queue.push({lines:lines,receipt:receipt,prio:prio||1,t:Date.now()});
   queue.sort(function(a,b){return b.prio-a.prio || a.t-b.t});
   // keep it from piling up: drop the least important thought (the last one after sorting)
@@ -276,7 +314,7 @@ function timeThought(){
                [["MGMT","It's "+t+" on a "+day+". Good. You're back. Let's pick up where we left off."],["TALLY","We left off nowhere."],["MGMT","Then this should be quick."]],
                [["MGMT",t+" on a "+day+". I've blocked out this time for you."],["GOSSIP","For what?"],["MGMT","For this. Whatever this is. It's on the calendar now. It's real."]]]),r,2);
   else if(h<22) say(vary([
-               [["HOST","It's "+t+". Of every page you could have opened tonight, you opened this one."],["GRAND","Taste."],["TALLY","Or they clicked a link."],["GRAND","Taste."]],
+               [["HOST","It's "+t+". Of every page you could have opened tonight, you opened this one."],["GRAND","Taste."],["TALLY","Or they clicked a link."],["GRAND","The right link. That's taste."]],
                [["MGMT","It's "+t+". After hours. Nobody's managing you right now."],["MGMT","Except me. I'm managing you."]],
                [["LIZARD","It's "+t+". Evening. The day is over. Somebody should tell your screen."]]]),r,2);
   else say(vary([
@@ -555,6 +593,18 @@ document.addEventListener("fullscreenchange",function(){
 addEventListener("offline",function(){ if(started) say([["HOST","Your internet just left."],["HOST","We're fine. We never needed it."]],"offline event",4); });
 addEventListener("online",function(){ if(started) say([["GOSSIP","The internet's back."],["GOSSIP","We didn't tell it anything about you. We didn't tell it anything."]],"online event",4); });
 
+/* ----- the extension's chat room showing up on this page ----- */
+var twinSaid=false;
+function twinCheck(){
+  if(twinSaid||!document.querySelector("[data-ybht]")) return;
+  twinSaid=true;
+  say(vary([
+    [["GOSSIP","There's a chat in the bottom corner. With our names in it."],["TALLY","Nine names. The same nine. I counted twice."],["HOST","Hello, other us! I'd wave. I can't wave."],["DREAD","There's only supposed to be one of each of us."],["MGMT","That's the extension. It lives in your browser. We live on this page. Let's keep it professional."]],
+    [["TALLY","The chat in the corner is back. Same nine names."],["GRAND","They copied us. Flattering. Inaccurate, but flattering."],["HOST","Be nice. They're family."]],
+    [["GOSSIP","The corner chat is here again. What are they saying about us?"],["MGMT","We can't read it. It's sealed off from this page. So are we, from them."],["DREAD","That's worse."]]
+  ]),"a chat panel from the Browser Has Thoughts extension is on this page",4);
+}
+
 /* ---------- begin ---------- */
 var visits=parseInt(store("ybht_visits")||"0",10)||0;
 var canStore=false;
@@ -596,7 +646,7 @@ $("go").onclick=function(){
   ambIdx=ambient.map(function(_,i){return i});
   for(var i=ambIdx.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=ambIdx[i];ambIdx[i]=ambIdx[j];ambIdx[j]=t;}
   setInterval(function(){
-    idleTick(); ambientTick();
+    idleTick(); ambientTick(); twinCheck();
     var el=Date.now()-t0;
     while(milestones.length && el>=milestones[0][0]){ var m=milestones.shift(); if(el-m[0]<20000 && !paused) m[1](); }
   },1000);
@@ -606,6 +656,9 @@ addEventListener("pagehide",function(){
   store("ybht_last",JSON.stringify({v:visits,ms:Date.now()-t0,woke:Object.keys(heard).length,x:!!heard.XBTN}));
 });
 drawRoster();
+document.querySelectorAll("[data-get]").forEach(function(b){b.onclick=function(e){e.stopPropagation(); var d=$("get"); if(d.showModal) d.showModal(); else d.setAttribute("open","");};});
+$("getclose").onclick=function(){var d=$("get"); if(d.close) d.close(); else d.removeAttribute("open");};
+$("get").addEventListener("click",function(e){ if(e.target===this && this.close) this.close(); });
 $("rc").onchange=function(){document.body.classList.toggle("norcpt",!this.checked)};
 })();
 </script>

@@ -16,6 +16,6 @@ Made with Claude Code.
 
 `extension/` turns the voices into a small live chat room in the corner of every page (Chrome, Brave, Edge). As you browse, they talk to each other about what your browser can see: the page title, the GitHub repo or profile you're on, your search words, scrolling to the bottom, copying, tab hopping, time on a site, the hour. You can type to them and they answer. A "receipts" button shows where every line came from, "quiet" stops them for an hour, and the dash shrinks the room to a small button. The chat history is shared across tabs and keeps the last 80 messages.
 
-It asks for one permission (`storage`) and runs on normal web pages. Everything it counts stays in your browser's own extension storage. It makes no network requests. Page titles, search words and what you type to the room are kept only in that same local storage.
+It asks for `storage` and `scripting` (to join tabs that were already open) and runs on normal web pages. Everything it counts stays in your browser's own extension storage. It makes no network requests. Page titles, search words and what you type to the room are kept only in that same local storage.
 
-To try it: open `chrome://extensions` (or `brave://extensions`), turn on Developer mode, press "Load unpacked" and pick the `extension` folder.
+To try it: download [browser-has-thoughts-extension.zip](https://connabyss.github.io/browser-has-thoughts/browser-has-thoughts-extension.zip) (the website's "Get them on every website" button) and unzip it. Open `chrome://extensions` (or `brave://extensions`, `edge://extensions`), turn on Developer mode, press "Load unpacked" and pick the unzipped folder. The zip always matches the `extension` folder here.

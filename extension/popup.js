@@ -32,12 +32,32 @@ $("now").onclick = function () {
   });
 };
 $("clear").onclick = function () { chrome.storage.local.set({ room: [] }); $("status").textContent = "Chat history cleared."; };
+$("forget").onclick = function () { chrome.storage.local.remove(["leaves", "trail", "history", "records", "topics", "work", "closed", "advice", "patAt"]); $("status").textContent = "Forgotten: habits, history and today's trail. The chat itself is still there."; };
+// hide or show the chat on the site you're on (the button says which)
+var curHost = null;
+function showHush(st) {
+  var hid = curHost && st.hushed[curHost];
+  $("hush").textContent = hid ? "Show the chat on this site again" : "Hide the chat on this site";
+  if (hid) $("status").textContent = "The chat is hidden on " + curHost + ".";
+}
+activeTab(function (tab) {
+  if (!tab) return;
+  chrome.tabs.sendMessage(tab.id, { ybht: "host" }, function (host) {
+    if (chrome.runtime.lastError || !host) return;
+    curHost = host; settings(showHush);
+  });
+});
 $("hush").onclick = function () {
   activeTab(function (tab) {
     if (!tab) return;
     chrome.tabs.sendMessage(tab.id, { ybht: "host" }, function (host) {
       if (chrome.runtime.lastError || !host) { $("status").textContent = "They don't talk on this page anyway."; return; }
-      settings(function (st) { st.hushed[host] = true; save(st); $("status").textContent = "The chat is hidden on " + host + "."; });
+      curHost = host;
+      settings(function (st) {
+        if (st.hushed[host]) { delete st.hushed[host]; save(st); $("status").textContent = "The chat is back on " + host + "."; }
+        else { st.hushed[host] = true; save(st); $("status").textContent = "The chat is hidden on " + host + "."; }
+        $("hush").textContent = st.hushed[host] ? "Show the chat on this site again" : "Hide the chat on this site";
+      });
     });
   });
 };
