@@ -74,6 +74,14 @@
       var r = v.getBoundingClientRect(); if (r.width >= 200 && r.height >= 120) lastVideoAt = Date.now();
     }, true);
   });
+  var pausedSaid = 0;
+  setInterval(function () {
+    if (!lastVideoAt || Date.now() - lastVideoAt < 50000 || Date.now() - lastVideoAt > 70000 || Date.now() - pausedSaid < 3600000 || !videoPage()) return;
+    pausedSaid = Date.now();
+    event("", function () { return { lines: pick([[["LIZARD", "The video stopped. Good. Stillness. Stay like this."], ["GOSSIP", "Is it over? Tell me how it ended."]],
+                                                  [["XBTN", "The video's over, or paused. Natural stopping point. Just saying. I'm up here."], ["HOST", "Or another one! They're free!"]]]),
+                                     r: "the video on this page stopped playing about a minute ago" }; }, 1);
+  }, 5000);
   function watching() { return videoPlaying() || Date.now() - lastVideoAt < 45000; }
   function videoPage() { return /(^|\.)youtube\.com$/.test(host) && /^\/(watch|shorts\/)/.test(location.pathname) || !!document.querySelector("video") && Array.prototype.some.call(document.querySelectorAll("video"), function (v) { var r = v.getBoundingClientRect(); return r.width >= 400 && r.height >= 220; }); }
   function typingNow() {
@@ -378,7 +386,7 @@
     var body = ((document.body && document.body.innerText) || "").slice(0, 300000), wc = words(body);
     var err = /^(error )?(4\d\d|5\d\d)\b|\b(error (4\d\d|5\d\d)|not found|page not found|something went wrong|access denied)\b/i;
     var adv = s && s.advice && Date.now() - s.advice.at < 10 * 60000 ? s.advice : null;
-    if (err.test(T + " " + h1) && adv) out.push({ key: key + ":err", lines: [["GOSSIP", "Management said the first result is always fine. That was " + since(adv.at) + ". Now we're on a page that says \u201C" + clip(h1 || T, 40) + "\u201D."],
+    if (err.test(T + " " + h1) && adv && adv.h === prevHost) out.push({ key: key + ":err", lines: [["GOSSIP", "Management said the first result is always fine. That was " + since(adv.at) + ". Now we're on a page that says \u201C" + clip(h1 || T, 40) + "\u201D."],
       ["MGMT", "I stand by it. I'm also reviewing it."]].concat(recent["It is never fine."] && Date.now() - recent["It is never fine."] < 15 * 60000 ? [["DREAD", "I said it is never fine. I'd like that in the minutes."], ["MGMT", "Noted. Reluctantly."]] : []),
       r: "Management's line " + since(adv.at) + " is in the room history; this page's title or headline" });
     else if (err.test(T + " " + h1)) out.push({ key: key + ":err", lines: [["DREAD", "\u201C" + clip(h1 || T, 50) + "\u201D. A dead end."], ["HOST", "It's all right. Everybody gets lost."], ["MGMT", "Go back. Pretend this never happened. I'll pretend too. I won't."]], r: "the page's title or headline" });
@@ -619,7 +627,8 @@
         mutedUntil = s.settings.muteUntil;
         if (!on) { queue.length = 0; pending = []; if (busy && curPrio < 2) cut = true; }
         put({ settings: s.settings });
-        post([["MGMT", on ? "We're back. Did you miss us? Don't answer that." : "Understood. Quiet for an hour. We'll still be here, watching quietly."]], on ? "you pressed quiet again" : "you pressed quiet", 2, true);
+        var back = on ? pageTalk(s) : null;
+        post([["MGMT", on ? "We're back. Did you miss us? Don't answer that." : "Understood. Quiet for an hour. We'll still be here, watching quietly."]].concat(back ? back.lines : []), on ? "you pressed quiet again" + (back ? "; then " + back.r : "") : "you pressed quiet", 2, true);
       });
     };
     root.querySelector("form").onsubmit = function (e) {
@@ -704,6 +713,7 @@
       function draw() { url = renderShare(msgs, !cb.checked); img.src = url; }
       cb.onchange = draw; draw();
       cancel.onclick = function () { box.remove(); };
+      box.tabIndex = -1; box.addEventListener("keydown", function (e) { if (e.key === "Escape") box.remove(); }); setTimeout(function () { try { box.focus(); } catch (x) {} }, 0);
       save.onclick = function () { var a = document.createElement("a"); a.href = url; a.download = "browser-thoughts.png"; document.documentElement.appendChild(a); a.click(); a.remove(); box.remove(); };
     });
   }
@@ -740,7 +750,7 @@
   /* ---------- posting: one line at a time, with "is typing", so nothing goes by too fast ---------- */
   var queue = [], busy = false, cut = false, cutBelow = 0, curPrio = 0, mutedUntil = 0;
   // prio 2: answering you; 1: something you just did; 0: filling silence
-  var recent = {}, shapes = {}, openers = {}, lastV = null, run = 0;
+  var recent = {}, shapes = {}, openers = {}, lastV = null, run = 0, lastVs = [];
   // the corporate openers that sound the same twice in a row
   function opener(t) { var m = /^(quick sync|circling back|let's touch base|i've reviewed|we need to talk|quick question)/i.exec(t || ""); return m ? m[1].toLowerCase() : ""; }
   function shape(t) { return (t || "").replace(/\u201C[^\u201D]*\u201D/g, "Q").replace(/[a-z0-9-]+(\.[a-z0-9-]+)+/gi, "H").replace(/\d[\d,.]*/g, "N").toLowerCase(); }
@@ -756,6 +766,7 @@
     if (prio < 1.5 && !fresh(lines)) return false;
     if (prio === 1.5 && !fresh(lines, 30 * 60000)) return false;
     if (prio < 1.5 && lines[0] && lines[0][0] === lastV && (prio < 1 || run >= 2)) return false; // the same voice again would be a monologue
+    if (prio < 1.5 && lines[0] && lines[0][0] === "MGMT" && lastVs.filter(function (v) { return v === "MGMT"; }).length > 5) return false;
     var op = opener(lines[0] && lines[0][1]);
     if (prio < 2 && op && openers[op] && Date.now() - openers[op] < 3600000) return false;
     if (!force && busy) return false; // a conversation is already going; don't pile on
@@ -809,7 +820,7 @@
     m.ts = Date.now(); m.h = host;
     renderMsg(m); if (open) scrollDown();
     if (m.t && m.v !== "YOU") { recent[m.t] = m.ts; shapes[shape(m.t)] = m.ts; var o = opener(m.t); if (o) openers[o] = m.ts; }
-    if (m.v !== "SYS") { run = m.v === lastV ? run + 1 : 1; lastV = m.v; }
+    if (m.v !== "SYS") { run = m.v === lastV ? run + 1 : 1; lastV = m.v; lastVs.push(m.v); if (lastVs.length > 15) lastVs.shift(); }
     try {
       chrome.runtime.sendMessage({ ybht: "append", m: m }, function (ok) {
         if (chrome.runtime.lastError || !ok) get(function (s) { s.room.push(m); if (s.room.length > 80) s.room = s.room.slice(-80); put({ room: s.room, lastSpoke: Date.now() }); });
@@ -860,7 +871,7 @@
       if (yt.channel && shares(yt.channel))
         riff = [["GOSSIP", yt.channel + "! I know that name. It's right there under the video."]].concat(yt.subs ? [["TALLY", yt.subs + ". And not one of them has ever talked to us."], ["HOST", "You did, though."]] : [["HOST", "Tell them we said hi."]]);
       else if (PT && said.length && shares(PT))
-        riff = pick([[["GOSSIP", "You're talking about \u201C" + clip(PT, 45) + "\u201D. Finally, someone wants to talk about it."], ["TALLY", "It's the only thing on the screen."]],
+        riff = pick([[["GOSSIP", "You're talking about \u201C" + clip(PT, 45) + "\u201D. Finally, someone wants to talk about it."], ["TALLY", "It's right there in the title."]],
                      [["MGMT", "On topic. I love it. That's what this room is for."], ["LIZARD", "This room is for lying down."]]]);
       var named = /^(?:hey |hi |ok |okay |yo )?(tally|dread|hospitality|host|gossip|lizard|the lizard|grandeur|management|manager|cursor|the cursor|x button|the x button|x)\b[,:!?. ]*(.*)$/.exec(low);
       var tw0 = onTwinSite() ? twinLast() : null;
@@ -878,7 +889,7 @@
       else if (named) { R = byName(named[1], named[2], s, h, sites); put({ namedAny: true }); }
       else if (/^(hi|hey|hello|yo|sup|hiya|howdy|hai)\b/.test(low)) R = before ? [["HOST", "Hello again! Hi! Welcome back to the room!"], ["TALLY", "That's message number " + (before + 1) + " from you. Nobody else has ever written in here."], ["GOSSIP", "We don't get out much."]]
                                                                          : [["HOST", "Hello! Hi! Welcome! That's the first thing anyone has ever said to us."], ["GOSSIP", "We don't get out much."]];
-      else if (/(shut up|be quiet|stop talking|go away|^quiet\b|^shh+|\bstfu\b)/.test(low)) { s.settings.muteUntil = Date.now() + 3600000; mutedUntil = s.settings.muteUntil; queue.length = 0; pending = []; put({ settings: s.settings }); R = [["MGMT", "Understood. Quiet for one hour, starting now. I've put it in the calendar."], ["XBTN", "Or there's me."]]; }
+      else if (/(shut up|be quiet|stop talking|go away|^quiet\b|^shh+|\bstfu\b)/.test(low)) { s.settings.muteUntil = Date.now() + 3600000; mutedUntil = s.settings.muteUntil; queue.length = 0; pending = []; put({ settings: s.settings }); R = [["MGMT", "Understood. Quiet for one hour, starting now. I've put it in the calendar."]]; }
       else if (/who (are|r) (you|u)|who.?s here|roll ?call/.test(low)) R = pick([[["TALLY", "Tally. I count."], ["GOSSIP", "Gossip. Who's asking?"], ["LIZARD", "The Lizard. Warm."], ["MGMT", "Management. That's enough introductions. There are nine of us. You'll meet the rest when they have something to say."]],
                   [["HOST", "Hospitality! Welcome!"], ["DREAD", "Dread. Hello. It won't last."], ["GRAND", "Grandeur. You know me."], ["MGMT", "Management. The others will introduce themselves when it's relevant. The X Button is always relevant."], ["XBTN", "Up top."]]]);
       else if (/how long|how much time|stats|how many|how am i doing/.test(low)) R = [["TALLY", host + ": " + mins(h.ms) + " on screen today, at least " + n(h.loads, "page load", "page loads") + ". " + n(sites, "site", "sites") + " today in total."], ["MGMT", "I'll pretend that's normal."]];
@@ -889,13 +900,19 @@
       else if (/\bclose\b|x button/.test(low)) R = [["XBTN", "You called?"], ["XBTN", "I'm up top. Same as always. Waiting."]];
       else if (/\bwork/.test(low)) R = [["MGMT", "Did someone say work? " + mins(h.ms) + " on " + host + " today. Is that the work?"]];
       else if (t.length >= 4 && t === t.toUpperCase() && /[A-Z]/.test(t)) R = [["DREAD", "Why are we shouting."], ["LIZARD", "Lower your voice. The screen can hear you."], ["TALLY", "It can't."]];
+      else if (/spy|spying|watching me|track(ing)? me|what do you (know|see|keep)|what have you got on me|privacy|creepy/.test(low)) R = spyList(s, sites);
+      else if (/what time|the time\b|what day/.test(low)) R = [["TALLY", "It's " + clock(new Date()) + " on " + DAYS[new Date().getDay()] + ". Your computer's clock says so."], ["DREAD", "Later than you think."], ["TALLY", "Exactly as late as I said."]];
+      else if (/\bjoke\b|make me laugh|say something funny/.test(low)) R = pick([[["MGMT", "A joke. Ok. A website, a browser and a tab walk into a bar."], ["MGMT", "That's the whole joke. We're the bar."]],
+                                                                                     [["GRAND", "The joke is " + n(sites, "site", "sites") + " today."], ["TALLY", "That's just a number."], ["GRAND", "Delivered well, it's a joke."]],
+                                                                                     [["XBTN", "Knock knock."], ["HOST", "Who's there?"], ["XBTN", "Me. Up top. Every time."]]]);
+      else if (w <= 2 && t.length >= 5 && !/[aeiouy]/i.test(t.replace(/[^a-z]/gi, "")) || /^(asdf|qwer|zxcv|jkl|hjkl|sdfg|fdsa)/i.test(low)) R = [["TALLY", n(t.replace(/\s/g, "").length, "key", "keys") + ". Mostly one row of the keyboard."], ["GOSSIP", "Is it a code? Tell me it's a code."], ["CURSOR", "It's a keyboard being patted."]];
       else if (/\?\s*$/.test(t)) R = pick([
         [["GOSSIP", "Great question. I don't know. I'll ask around."], ["TALLY", "There's nobody to ask."], ["GOSSIP", "I'll ask around in here."]],
         [["MGMT", "Let's take that offline."], ["HOST", "We are offline."], ["MGMT", "Then we've already taken it."]],
         [["GRAND", "The answer is within you."], ["TALLY", "It isn't in my numbers."]]
       ]);
       else if (riff) R = riff;
-      else R = pick([
+      else R = pickNew([
         [["TALLY", "That's " + n(w, "word", "words") + ". Noted."], ["GOSSIP", "What did they mean, though?"]],
         PT ? [["MGMT", "Noted. I'm adding it to the minutes for \u201C" + clip(PT, 40) + "\u201D."], ["HOST", "There are minutes?"], ["MGMT", "There are now."]] : [["GOSSIP", "I'm telling everyone."], ["HOST", "There's no one to tell."], ["GOSSIP", "I'm telling everyone in here."]],
         [["MGMT", "Thank you for your feedback. It's been filed in this browser, and nowhere else."]],
@@ -905,6 +922,18 @@
       put({ youCount: before + 1 });
       post(R, "you typed " + n(w, "word", "words") + " into the chat (kept only in this browser)", 2, true);
     });
+  }
+
+  // a catch-all reply that isn't the one used last time
+  var lastCatch = -1;
+  function pickNew(list) { var i; do { i = Math.floor(Math.random() * list.length); } while (list.length > 1 && i === lastCatch); lastCatch = i; return list[i]; }
+  // "are you spying on me?": the honest list of what's kept
+  function spyList(s, sites) {
+    var tr = (s.trail || []).filter(function (x) { return x.day === today(); }), qs = tr.filter(function (x) { return x.q; }).length;
+    var top = null, tm = 0; Object.keys(s.hosts).forEach(function (k) { if ((s.hosts[k].ms || 0) > tm) { tm = s.hosts[k].ms; top = k; } });
+    return [["TALLY", "Here's everything we keep about today: " + n(sites, "site", "sites") + (top ? ", most time on " + top + " (" + mins(tm) + ")" : "") + ", " + n(qs, "search", "searches") + ", " + n(s.exitsToday || 0, "trip", "trips") + " to the X Button, " + n((s.youCount || 0) + 1, "message", "messages") + " from you."],
+            ["HOST", "It all stays in this browser. Nothing is sent anywhere. Press receipts and every line shows where it came from."],
+            ["MGMT", "Type “forget” and we forget your habits. I'll forget I ever managed you."]];
   }
 
   // when you talk to one voice by name, that voice answers
@@ -1061,10 +1090,11 @@
         ["mv2", ["HOST", ((s.hosts[host] || {}).loads > 1 ? "Back on " + host + "! " : "New place! " + host + ". ") + "I'll put the kettle on. I don't have a kettle."]],
         ["mv3", ["MGMT", "We're relocating from " + prevHost + " to " + host + ". Effective immediately. Effective a second ago."]],
         ["mv4", ["DREAD", "We left " + prevHost + ". We'll never know how it ended."]],
-        ["mv5", ["CURSOR", "I drove us from " + prevHost + " to " + host + ". You're welcome. I did the clicking."], ["TALLY", "You did the clicking."]]
+        s.linkFrom === prevHost && Date.now() - (s.linkAt || 0) < 30000 ? ["mv5", ["CURSOR", "I drove us from " + prevHost + " to " + host + ". You're welcome. I clicked the link."], ["TALLY", "You clicked the link."]]
+                                                                        : ["mv6", ["CURSOR", "We're on " + host + " now. No link on " + prevHost + " was clicked to get here. I wasn't consulted."]]
       ].filter(function (m) { return !s.said[m[0]]; });
-      if (!lines && prevHost && prevHost !== host && Date.now() - prevAt < 60000 && MOVES.length && Math.random() < 0.5) {
-        var mv = pick(MOVES); s.said[mv[0]] = Date.now(); put({ said: s.said });
+      if (!lines && prevHost && prevHost !== host && Date.now() - prevAt < 60000 && MOVES.length && Date.now() - (s.said.lastMove || 0) > 600000 && Math.random() < 0.5) {
+        var mv = pick(MOVES); s.said[mv[0]] = Date.now(); s.said.lastMove = Date.now(); put({ said: s.said });
         lines = mv.slice(1); r = "the last site before this one was " + prevHost;
         if (p) { lines = lines.concat(p.lines.slice(0, 2)); r += "; " + p.r; }
       }
@@ -1167,6 +1197,7 @@
   // pressing buttons (links take you away before anyone can answer, so only buttons)
   var lastClick = 0;
   document.addEventListener("click", function (e) {
+    try { if (!inPanel(e) && e.target.closest && e.target.closest("a[href]")) put({ linkAt: Date.now(), linkFrom: host }); } catch (x) {}
     if (inPanel(e)) return;
     var b = e.target && e.target.closest ? e.target.closest('button, [role="button"], input[type="submit"]') : null;
     if (!b || Date.now() - lastClick < 45000) return;
@@ -1174,6 +1205,7 @@
     if (!label || label.length < 2) return;
     var L = null, Q = "\u201C" + label + "\u201D";
     if (/add to (cart|basket|bag)|buy now|checkout|place (your )?order|purchase/i.test(label)) L = [["MGMT", "You pressed " + Q + ". I'm going to need a receipt. A real one."], ["LIZARD", "The hunt is over."]];
+    else if (/jump to recipe|skip to recipe/i.test(label)) L = [["LIZARD", "You skipped the life story. Straight to the food. Good. That's what I'd do."], ["GOSSIP", "I wanted the life story."]];
     else if (/delete|remove|discard/i.test(label)) L = [["DREAD", "You pressed " + Q + ". It's gone. Probably. Things are rarely gone."]];
     else if (/subscribe|follow|join/i.test(label)) L = [["GOSSIP", "You pressed " + Q + "! Who is it? Tell me everything."]];
     else if (/sign out|log out|logout/i.test(label)) L = [["HOST", "Signing out? That's fine. We don't sign out. We live here."]];
